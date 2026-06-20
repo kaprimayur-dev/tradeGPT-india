@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canvas: #faf8ff;
+  --color-surface-base: #ffffff;
+  --color-surface-elevation: #ededf9;
+  --color-border-subtle: #c3c6d7;
+  --color-primary: #004ac6;
+  --color-primary-fixed-dim: #003ea8;
+  --color-secondary: #505f76;
+  --color-secondary-container: #d0e1fb;
+  --color-on-secondary-container: #0b1c30;
+  --color-text-primary: #191b23;
+  --color-text-muted: #434655;
+  --color-alert-amber: #bc4800;
+  --color-alert-red: #ba1a1a;
+  --color-zebra-a: #ffffff;
+  --color-zebra-b: #f8fafc;
+  
+  --font-display: var(--font-hanken-grotesk), sans-serif;
+  --font-body: var(--font-inter), sans-serif;
+  --font-mono: var(--font-jetbrains-mono), monospace;
+  
+  --radius-sm: 0.125rem;
+  --radius-DEFAULT: 0.25rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+}
+
+body {
+  background-color: #faf8ff;
+  color: #191b23;
+  font-family: var(--font-inter), sans-serif;
+}
+
+/* Custom scrollbar for high-density financial data */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #c3c6d7;
+  border-radius: 2px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #737686;
+}
+
+/* TradingView-inspired watermark background grid */
+.trading-view-grid {
+  background-image: radial-gradient(#e1e2ed 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Print optimizations for intelligence reports */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+}
