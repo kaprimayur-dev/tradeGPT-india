@@ -1,25 +1,29 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { api, MarketDataResponse } from "../api";
 
 export default function MarketIntelligencePage() {
   const [selectedInterval, setSelectedInterval] = useState("15M");
-  const [niftyPrice, setNiftyPrice] = useState(22450.20);
-  const [priceChange, setPriceChange] = useState(0.45);
+  const [niftyPrice, setNiftyPrice] = useState(24013.10);
+  const [priceChange, setPriceChange] = useState(-0.64);
+  
+  const [sensexPrice, setSensexPrice] = useState(76802.90);
+  const [sensexChange, setSensexChange] = useState(-0.78);
+
+  const [selectedIndex, setSelectedIndex] = useState<"NIFTY" | "SENSEX">("NIFTY");
+  const [isIndexDropdownOpen, setIsIndexDropdownOpen] = useState(false);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [orderType, setOrderType] = useState<"BUY" | "SELL">("BUY");
-
-  // Simulate real-time price tick changes
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const change = (Math.random() - 0.48) * 4;
-      setNiftyPrice((prev) => parseFloat((prev + change).toFixed(2)));
-      setPriceChange((prev) => parseFloat((prev + (change / 22450) * 100).toFixed(4)));
-    }, 3000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const timeframes = ["1M", "5M", "15M", "1H", "1D"];
+  const [orderSubmitted, setOrderSubmitted] = useState<string | null>(null);
+  const [showFullscreenHint, setShowFullscreenHint] = useState(false);
+  
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [marketData, setMarketData] = useState<MarketDataResponse | null>(null);
+  const [usdinrPrice, setUsdinrPrice] = useState(83.50);
+  const [usdinrChange, setUsdinrChange] = useState(-0.02);
 
   const mockCandles = [
     { type: "green", height: "45%", wickTop: "15%", wickBottom: "80%" },
@@ -39,8 +43,117 @@ export default function MarketIntelligencePage() {
     { type: "green", height: "85%", wickTop: "0%", wickBottom: "95%" },
   ];
 
+  const [candles, setCandles] = useState(mockCandles);
+
+  const loadData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.getMarketData();
+      setMarketData(data);
+      if (data.indices) {
+        if (data.indices["NIFTY"]) {
+          setNiftyPrice(data.indices["NIFTY"].price);
+          setPriceChange(data.indices["NIFTY"].change);
+        }
+        if (data.indices["SENSEX"]) {
+          setSensexPrice(data.indices["SENSEX"].price);
+          setSensexChange(data.indices["SENSEX"].change);
+        }
+        if (data.indices["USDINR"]) {
+          setUsdinrPrice(data.indices["USDINR"].price);
+          setUsdinrChange(data.indices["USDINR"].change);
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to load live market data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  // Simulate real-time price tick changes once price is loaded
+  useEffect(() => {
+    if (loading || error) return;
+    const interval = setInterval(() => {
+      const niftyDelta = (Math.random() - 0.48) * 4;
+      setNiftyPrice((prev) => parseFloat((prev + niftyDelta).toFixed(2)));
+      setPriceChange((prev) => parseFloat((prev + (niftyDelta / 24000) * 100).toFixed(4)));
+
+      const sensexDelta = (Math.random() - 0.48) * 12;
+      setSensexPrice((prev) => parseFloat((prev + sensexDelta).toFixed(2)));
+      setSensexChange((prev) => parseFloat((prev + (sensexDelta / 76800) * 100).toFixed(4)));
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [loading, error]);
+
+  const handleTimeframeChange = (tf: string) => {
+    setSelectedInterval(tf);
+    // Randomize wicks/heights slightly to visually reflect chart update
+    const updated = candles.map((c) => {
+      const heightVal = parseInt(c.height, 10);
+      const diff = Math.floor(Math.random() * 16) - 8;
+      const newHeight = Math.min(90, Math.max(20, heightVal + diff)) + "%";
+      const newType = Math.random() > 0.45 ? "green" : "red";
+      return {
+        ...c,
+        height: newHeight,
+        type: newType,
+      };
+    });
+    setCandles(updated);
+  };
+
+  const timeframes = ["1M", "5M", "15M", "1H", "1D"];
+
+  const currentIndexPrice = selectedIndex === "NIFTY" ? niftyPrice : sensexPrice;
+  const currentIndexChange = selectedIndex === "NIFTY" ? priceChange : sensexChange;
+
+  const tickStep = selectedIndex === "NIFTY" ? 50 : 150;
+  const tickValues = [
+    currentIndexPrice + tickStep * 2,
+    currentIndexPrice + tickStep,
+    currentIndexPrice,
+    currentIndexPrice - tickStep,
+    currentIndexPrice - tickStep * 2,
+    currentIndexPrice - tickStep * 3,
+  ];
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#faf8ff] h-[calc(100vh-3.5rem)] font-body">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-4 border-[#004ac6] border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-xs font-semibold text-[#434655] uppercase tracking-wider animate-pulse">Loading Live Market Terminal...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#faf8ff] h-[calc(100vh-3.5rem)] font-body px-6">
+        <div className="bg-white border border-[#ba1a1a] rounded-xl p-6 max-w-md w-full shadow-md text-center">
+          <span className="material-symbols-outlined text-[#ba1a1a] !text-4xl mb-3">error_outline</span>
+          <h3 className="font-display font-bold text-base text-[#191b23] mb-1">Terminal Connection Error</h3>
+          <p className="text-xs text-[#737686] mb-4 leading-normal">{error}</p>
+          <button
+            onClick={loadData}
+            className="px-4 py-2 bg-[#004ac6] hover:bg-[#003ea8] text-white text-xs font-semibold rounded-lg transition-colors active:scale-95 duration-100"
+          >
+            Retry Connection
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex-1 flex flex-col overflow-hidden h-[calc(100vh-3.5rem)] font-body select-none">
+    <div className="flex-1 flex flex-col overflow-hidden h-[calc(100vh-3.5rem)] font-body">
       {/* Dynamic Workspace Container */}
       <div className="flex flex-1 overflow-hidden">
         
@@ -50,16 +163,47 @@ export default function MarketIntelligencePage() {
           {/* Chart Toolbar */}
           <div className="h-10 border-b border-[#c3c6d7] flex items-center px-4 justify-between bg-[#faf8ff]">
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-1 border-r border-[#c3c6d7] pr-4 cursor-pointer">
-                <span className="text-xs font-bold text-[#191b23]">NIFTY 50</span>
-                <span className="material-symbols-outlined text-[#737686] !text-sm">expand_more</span>
+              
+              {/* Index Switcher Dropdown */}
+              <div className="relative">
+                <div 
+                  onClick={() => setIsIndexDropdownOpen(!isIndexDropdownOpen)}
+                  className="flex items-center gap-1 border-r border-[#c3c6d7] pr-4 cursor-pointer hover:text-[#004ac6] transition-colors"
+                >
+                  <span className="text-xs font-bold text-[#191b23]">
+                    {selectedIndex === "NIFTY" ? "NIFTY 50" : "SENSEX"}
+                  </span>
+                  <span className="material-symbols-outlined text-[#737686] !text-sm">expand_more</span>
+                </div>
+                {isIndexDropdownOpen && (
+                  <div className="absolute top-8 left-0 bg-white border border-[#c3c6d7] rounded shadow-lg z-30 py-1 w-28 text-xs font-semibold">
+                    <div 
+                      onClick={() => {
+                        setSelectedIndex("NIFTY");
+                        setIsIndexDropdownOpen(false);
+                      }}
+                      className="px-3 py-2 hover:bg-[#f3f3fe] cursor-pointer"
+                    >
+                      NIFTY 50
+                    </div>
+                    <div 
+                      onClick={() => {
+                        setSelectedIndex("SENSEX");
+                        setIsIndexDropdownOpen(false);
+                      }}
+                      className="px-3 py-2 hover:bg-[#f3f3fe] cursor-pointer"
+                    >
+                      SENSEX
+                    </div>
+                  </div>
+                )}
               </div>
               
               <div className="flex items-center gap-3 text-[11px] font-bold text-[#434655]">
                 {timeframes.map((tf) => (
                   <span
                     key={tf}
-                    onClick={() => setSelectedInterval(tf)}
+                    onClick={() => handleTimeframeChange(tf)}
                     className={`cursor-pointer pb-0.5 transition-all ${
                       selectedInterval === tf
                         ? "text-[#004ac6] border-b-2 border-[#004ac6]"
@@ -90,10 +234,26 @@ export default function MarketIntelligencePage() {
               <span className="text-[10px] font-bold text-[#737686] tracking-wider uppercase font-mono">
                 VOL: 23.4M
               </span>
-              <span className="material-symbols-outlined text-[#737686] hover:text-[#191b23] cursor-pointer !text-base">
+              <span
+                onClick={() => setIsIndexDropdownOpen(!isIndexDropdownOpen)}
+                className="material-symbols-outlined text-[#737686] hover:text-[#191b23] cursor-pointer !text-base"
+                title="Chart Settings"
+              >
                 settings
               </span>
-              <span className="material-symbols-outlined text-[#737686] hover:text-[#191b23] cursor-pointer !text-base">
+              {showFullscreenHint && (
+                <div className="absolute right-0 top-8 bg-[#191b23] text-white text-[10px] font-mono px-2.5 py-1.5 rounded shadow-lg z-20 whitespace-nowrap">
+                  Press F11 for browser fullscreen
+                </div>
+              )}
+              <span 
+                onClick={() => {
+                  setShowFullscreenHint(true);
+                  setTimeout(() => setShowFullscreenHint(false), 2500);
+                }}
+                className="material-symbols-outlined text-[#737686] hover:text-[#191b23] cursor-pointer !text-base"
+                title="Fullscreen (Press F11)"
+              >
                 fullscreen
               </span>
             </div>
@@ -104,7 +264,7 @@ export default function MarketIntelligencePage() {
             
             {/* Candlestick Visualization */}
             <div className="absolute inset-0 px-6 pt-16 pb-28 flex items-end justify-between select-none">
-              {mockCandles.map((candle, idx) => (
+              {candles.map((candle, idx) => (
                 <div key={idx} className="flex-1 h-full flex flex-col justify-end items-center relative">
                   {/* Wick */}
                   <div
@@ -127,28 +287,28 @@ export default function MarketIntelligencePage() {
             </div>
 
             {/* Floating Live Data Tooltip */}
-            <div className="absolute top-4 left-4 bg-white/90 border border-[#c3c6d7] p-3 rounded shadow-sm backdrop-blur-sm z-10 max-w-[200px]">
+            <div className="absolute top-4 left-4 bg-white/90 border border-[#c3c6d7] p-3 rounded shadow-sm backdrop-blur-sm z-10 max-w-[220px]">
               <p className="text-[9px] font-bold text-[#737686] uppercase tracking-wide mb-1 font-mono">
-                DATA: 2026-06-20 14:12
+                DATA: {marketData?.timestamp ? new Date(marketData.timestamp).toLocaleTimeString() : "2026-06-20 14:12"}
               </p>
               <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-xs">
-                <span className="text-[#434655]">O: <span className="font-semibold text-[#191b23]">22,410.50</span></span>
-                <span className="text-[#434655]">H: <span className="font-semibold text-[#191b23]">22,465.10</span></span>
-                <span className="text-[#434655]">L: <span className="font-semibold text-[#191b23]">22,398.20</span></span>
-                <span className="text-[#434655]">C: <span className="font-semibold text-[#004ac6]">{niftyPrice}</span></span>
+                <span className="text-[#434655]">O: <span className="font-semibold text-[#191b23]">{(currentIndexPrice * 0.998).toFixed(2)}</span></span>
+                <span className="text-[#434655]">H: <span className="font-semibold text-[#191b23]">{(currentIndexPrice * 1.002).toFixed(2)}</span></span>
+                <span className="text-[#434655]">L: <span className="font-semibold text-[#191b23]">{(currentIndexPrice * 0.995).toFixed(2)}</span></span>
+                <span className="text-[#434655]">C: <span className="font-semibold text-[#004ac6]">{currentIndexPrice.toFixed(2)}</span></span>
               </div>
             </div>
 
             {/* Price Axis (Right) */}
             <div className="absolute right-0 top-0 bottom-0 w-16 border-l border-[#c3c6d7] bg-[#faf8ff] flex flex-col justify-between py-10 text-[10px] font-mono text-[#737686] items-center">
-              <span>22,600</span>
-              <span>22,550</span>
+              <span>{tickValues[0].toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+              <span>{tickValues[1].toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
               <span className="bg-[#004ac6] text-white px-1.5 py-0.5 rounded-sm w-full text-center font-bold">
-                {niftyPrice}
+                {currentIndexPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}
               </span>
-              <span>22,400</span>
-              <span>22,350</span>
-              <span>22,300</span>
+              <span>{tickValues[3].toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+              <span>{tickValues[4].toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+              <span>{tickValues[5].toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
             </div>
 
             {/* Volume Histogram (Overlayed bottom) */}
@@ -174,47 +334,47 @@ export default function MarketIntelligencePage() {
           <div className="p-4 border-b border-[#c3c6d7]">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-[11px] font-bold text-[#191b23] uppercase tracking-wider">Market Breadth</h3>
-              <span className="text-[10px] text-[#10b981] font-bold">42 ADV / 8 DEC</span>
+              <span className="text-[10px] text-[#10b981] font-bold font-mono">
+                {marketData?.breadth.advancing || 0} ADV / {marketData?.breadth.declining || 0} DEC
+              </span>
             </div>
             <div className="grid grid-cols-5 gap-1">
-              <div className="aspect-square bg-[#10b981] rounded-sm hover:opacity-90 transition-opacity"></div>
-              <div className="aspect-square bg-[#10b981]/80 rounded-sm hover:opacity-90 transition-opacity"></div>
-              <div className="aspect-square bg-[#10b981]/70 rounded-sm hover:opacity-90 transition-opacity"></div>
-              <div className="aspect-square bg-[#10b981]/90 rounded-sm hover:opacity-90 transition-opacity"></div>
-              <div className="aspect-square bg-[#ba1a1a]/50 rounded-sm hover:opacity-90 transition-opacity"></div>
-              <div className="aspect-square bg-[#10b981]/60 rounded-sm hover:opacity-90 transition-opacity"></div>
-              <div className="aspect-square bg-[#10b981]/40 rounded-sm hover:opacity-90 transition-opacity"></div>
-              <div className="aspect-square bg-[#10b981] rounded-sm hover:opacity-90 transition-opacity"></div>
-              <div className="aspect-square bg-[#ba1a1a]/70 rounded-sm hover:opacity-90 transition-opacity"></div>
-              <div className="aspect-square bg-[#10b981]/80 rounded-sm hover:opacity-90 transition-opacity"></div>
+              {Array.from({ length: 10 }).map((_, idx) => {
+                const adv = marketData?.breadth.advancing || 0;
+                const dec = marketData?.breadth.declining || 0;
+                const total = adv + dec;
+                const ratio = total > 0 ? adv / total : 0.5;
+                const isGreen = idx < Math.round(ratio * 10);
+                return (
+                  <div
+                    key={idx}
+                    className={`aspect-square rounded-sm hover:opacity-90 transition-opacity ${
+                      isGreen ? "bg-[#10b981]" : "bg-[#ba1a1a]"
+                    }`}
+                  ></div>
+                );
+              })}
             </div>
           </div>
 
           {/* Sector Performance */}
           <div className="p-4 border-b border-[#c3c6d7]">
             <h3 className="text-[11px] font-bold text-[#191b23] uppercase tracking-wider mb-3">Sector Performance</h3>
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold text-[#434655] flex-1">NIFTY BANK</span>
-                <div className="w-24 h-1.5 bg-[#e7e7f3] rounded-full overflow-hidden">
-                  <div className="bg-[#10b981] h-full w-[85%]"></div>
+            <div className="space-y-3 max-h-[160px] overflow-y-auto custom-scrollbar pr-1">
+              {(marketData?.sectors || []).map((sec, idx) => (
+                <div key={idx} className="flex items-center gap-3">
+                  <span className="text-xs font-semibold text-[#434655] flex-1 truncate uppercase">{sec.name}</span>
+                  <div className="w-20 h-1.5 bg-[#e7e7f3] rounded-full overflow-hidden shrink-0">
+                    <div 
+                      className={`h-full ${sec.change >= 0 ? "bg-[#10b981]" : "bg-[#ba1a1a]"}`} 
+                      style={{ width: `${Math.min(100, Math.max(15, Math.abs(sec.change) * 20))}%` }}
+                    ></div>
+                  </div>
+                  <span className={`text-[10px] font-mono font-bold w-10 text-right shrink-0 ${sec.change >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
+                    {sec.change >= 0 ? "+" : ""}{sec.change.toFixed(2)}%
+                  </span>
                 </div>
-                <span className="text-[10px] font-mono text-[#10b981] font-bold w-10 text-right">+1.8%</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold text-[#434655] flex-1">NIFTY IT</span>
-                <div className="w-24 h-1.5 bg-[#e7e7f3] rounded-full overflow-hidden">
-                  <div className="bg-[#ba1a1a] h-full w-[35%]"></div>
-                </div>
-                <span className="text-[10px] font-mono text-[#ba1a1a] font-bold w-10 text-right">-0.4%</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold text-[#434655] flex-1">NIFTY FMCG</span>
-                <div className="w-24 h-1.5 bg-[#e7e7f3] rounded-full overflow-hidden">
-                  <div className="bg-[#10b981] h-full w-[55%]"></div>
-                </div>
-                <span className="text-[10px] font-mono text-[#10b981] font-bold w-10 text-right">+0.9%</span>
-              </div>
+              ))}
             </div>
           </div>
 
@@ -229,56 +389,41 @@ export default function MarketIntelligencePage() {
             </div>
             
             <div className="flex-1 overflow-y-auto custom-scrollbar divide-y divide-[#e7e7f3]">
-              <div className="p-3 hover:bg-[#faf8ff] transition-all cursor-pointer">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[9px] font-bold text-[#004ac6] tracking-wider font-mono">BLOOMBERG</span>
-                  <span className="text-[9px] text-[#737686] font-mono font-medium">10:42 AM</span>
-                </div>
-                <p className="text-xs leading-normal text-[#191b23] font-medium">
-                  RBI maintains repo rate at 6.5%, focus shifts to liquidity management measures.
-                </p>
-              </div>
-
-              <div className="p-3 hover:bg-[#faf8ff] transition-all cursor-pointer">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[9px] font-bold text-[#004ac6] tracking-wider font-mono">REUTERS</span>
-                  <span className="text-[9px] text-[#737686] font-mono font-medium">10:35 AM</span>
-                </div>
-                <p className="text-xs leading-normal text-[#191b23] font-medium">
-                  FIIs turn net buyers in cash segment; inflows of ₹1,420 Cr recorded in pre-open.
-                </p>
-              </div>
-
-              <div className="p-3 hover:bg-[#faf8ff] transition-all cursor-pointer">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[9px] font-bold text-[#505f76] tracking-wider font-mono">SYSTEM ALERT</span>
-                  <span className="text-[9px] text-[#737686] font-mono font-medium">10:20 AM</span>
-                </div>
-                <p className="text-xs leading-normal text-[#434655] italic">
-                  Heavy block trade detected in HDFC Bank: 1.2M shares @ 1,451.50.
-                </p>
-              </div>
-
-              <div className="p-3 hover:bg-[#faf8ff] transition-all cursor-pointer">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[9px] font-bold text-[#004ac6] tracking-wider font-mono">CNBC-TV18</span>
-                  <span className="text-[9px] text-[#737686] font-mono font-medium">10:05 AM</span>
-                </div>
-                <p className="text-xs leading-normal text-[#191b23] font-medium">
-                  Crude Oil dips below $82 as inventory build-up exceeds market projections.
-                </p>
-              </div>
+              {(marketData?.news || []).map((item, idx) => (
+                <a 
+                  key={idx}
+                  href={item.link && item.link !== "N/A" ? item.link : undefined}
+                  target={item.link && item.link !== "N/A" ? "_blank" : undefined}
+                  rel="noopener noreferrer"
+                  className={`p-3 hover:bg-[#faf8ff] hover:text-[#004ac6] transition-all block border-b border-[#e7e7f3] ${
+                    item.link && item.link !== "N/A" ? "cursor-pointer" : "cursor-default opacity-80"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[9px] font-bold text-[#004ac6] tracking-wider font-mono uppercase">{item.publisher}</span>
+                    <span className="text-[9px] text-[#737686] font-mono font-medium truncate max-w-[120px]">{item.date}</span>
+                  </div>
+                  <p className="text-xs leading-normal text-[#191b23] font-semibold hover:text-[#004ac6] transition-colors">
+                    {item.title}
+                  </p>
+                  <p className="text-[10px] leading-normal text-[#737686] mt-0.5 line-clamp-2">
+                    {item.summary}
+                  </p>
+                </a>
+              ))}
             </div>
           </div>
         </aside>
       </div>
 
       {/* Bottom Footer Status Bar */}
-      <footer className="no-print h-12 border-t border-[#c3c6d7] bg-white flex items-center px-6 gap-6 shrink-0 z-10 select-none">
+        <footer className="no-print h-12 border-t border-[#c3c6d7] bg-white flex items-center px-6 gap-6 shrink-0 z-10 select-none">
         <div className="flex items-center gap-2 border-r border-[#c3c6d7] pr-6">
-          <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider">Portfolio Value</span>
-          <span className="font-mono text-sm font-bold text-[#191b23]">₹42,85,120.00</span>
-          <span className="text-xs text-[#10b981] font-semibold">(+₹12,450)</span>
+          <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider">USD/INR</span>
+          <span className="font-mono text-sm font-bold text-[#191b23]">₹{usdinrPrice.toFixed(2)}</span>
+          <span className={`text-xs font-semibold ${usdinrChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
+            ({usdinrChange >= 0 ? "+" : ""}{usdinrChange.toFixed(2)}%)
+          </span>
         </div>
 
         <div className="flex items-center gap-2 border-r border-[#c3c6d7] pr-6">
@@ -324,7 +469,7 @@ export default function MarketIntelligencePage() {
           }
         }}
       >
-        <div className="bg-white w-[380px] border border-[#c3c6d7] shadow-xl rounded-lg p-5 overflow-hidden transition-all duration-300">
+        <div className="bg-white w-[380px] border border-[#c3c6d7] shadow-xl rounded-lg p-5 overflow-hidden transition-all duration-300 animate-in fade-in zoom-in-95 duration-150">
           <div className="flex items-center justify-between mb-4 border-b border-[#e7e7f3] pb-3">
             <h3 className="font-display font-bold text-base text-[#191b23]">New Order</h3>
             <span
@@ -369,9 +514,10 @@ export default function MarketIntelligencePage() {
                 </label>
                 <input
                   type="text"
-                  className="w-full bg-[#f3f3fe] border border-[#c3c6d7] rounded px-3 py-1.5 text-xs text-[#191b23] focus:border-[#004ac6] focus:ring-1 focus:ring-[#004ac6] outline-none"
-                  defaultValue="NIFTY 50 JUN FUT"
-                  readOnly
+                  id="orderSymbol"
+                  className="w-full bg-[#f3f3fe] border border-[#c3c6d7] rounded px-3 py-1.5 text-xs text-[#191b23] focus:border-[#004ac6] focus:ring-1 focus:ring-[#004ac6] outline-none font-semibold uppercase"
+                  defaultValue={selectedIndex === "NIFTY" ? "NIFTY 50 JUN FUT" : "SENSEX JUN FUT"}
+                  key={selectedIndex}
                 />
               </div>
               <div>
@@ -380,6 +526,7 @@ export default function MarketIntelligencePage() {
                 </label>
                 <input
                   type="number"
+                  id="orderQty"
                   className="w-full bg-[#f3f3fe] border border-[#c3c6d7] rounded px-3 py-1.5 text-xs text-[#191b23] focus:border-[#004ac6] focus:ring-1 focus:ring-[#004ac6] outline-none font-mono"
                   defaultValue="50"
                 />
@@ -393,17 +540,31 @@ export default function MarketIntelligencePage() {
               <input
                 type="number"
                 step="0.05"
+                id="orderPrice"
                 className="w-full bg-[#f3f3fe] border border-[#c3c6d7] rounded px-3 py-1.5 text-xs text-[#191b23] focus:border-[#004ac6] focus:ring-1 focus:ring-[#004ac6] outline-none font-mono font-semibold"
-                value={niftyPrice}
-                onChange={(e) => setNiftyPrice(parseFloat(e.target.value))}
+                value={currentIndexPrice}
+                onChange={(e) => {
+                  if (selectedIndex === "NIFTY") {
+                    setNiftyPrice(parseFloat(e.target.value) || 24000);
+                  } else {
+                    setSensexPrice(parseFloat(e.target.value) || 76000);
+                  }
+                }}
               />
             </div>
 
             <button
               onClick={() => {
-                alert(`Mock Order Executed: ${orderType} 50 Qty @ ${niftyPrice}`);
-                const modal = document.getElementById("tradeModal");
-                if (modal) modal.classList.add("hidden");
+                const qtyInput = document.getElementById("orderQty") as HTMLInputElement;
+                const symInput = document.getElementById("orderSymbol") as HTMLInputElement;
+                const qty = qtyInput ? qtyInput.value : "50";
+                const symbol = symInput ? symInput.value : "NIFTY 50";
+                setOrderSubmitted(`${orderType} ${qty} qty of ${symbol} @ ₹${currentIndexPrice.toFixed(2)} — Order queued.`);
+                setTimeout(() => {
+                  setOrderSubmitted(null);
+                  const modal = document.getElementById("tradeModal");
+                  if (modal) modal.classList.add("hidden");
+                }, 3000);
               }}
               className={`w-full text-white py-2.5 text-xs font-bold rounded mt-2 hover:opacity-90 active:scale-[0.98] transition-all ${
                 orderType === "BUY" ? "bg-[#10b981]" : "bg-[#ba1a1a]"
@@ -411,6 +572,12 @@ export default function MarketIntelligencePage() {
             >
               SUBMIT {orderType} ORDER
             </button>
+            {orderSubmitted && (
+              <div className="mt-3 p-3 bg-[#f0fdf4] border border-[#10b981] rounded-lg text-center">
+                <span className="material-symbols-outlined text-[#10b981] !text-base mr-1 align-middle">check_circle</span>
+                <span className="text-xs font-semibold text-[#10b981]">{orderSubmitted}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>

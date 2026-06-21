@@ -1,0 +1,42 @@
+# Secrets & Env files
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# Python build & virtual envs
+__pycache__/
+venv/
+.venv/
+env/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+backend/venv/
+
+# Node.js build & packages
+node_modules/
+frontend/node_modules/
+.next/
+frontend/.next/
+tsconfig.tsbuildinfo
+frontend/tsconfig.tsbuildinfo
+next-env.d.ts
+frontend/next-env.d.ts
+
+# Databases & Vector store
+.chromadb/
+backend/chromadb_store/
+chromadb_store/
+
+# Application Logs
+*.log
+backend/*.log
+logs/
+
+# OS/System files
+.DS_Store
+Thumbs.db
+desktop.ini

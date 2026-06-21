@@ -39,10 +39,6 @@ def setup_monkey_patch():
         
         for attempt in range(max_retries):
             try:
-                # Proactive rate-limiting cooldown delay: sleep 10s between LLM invocations to prevent hitting free tier limit
-                if attempt == 0:
-                    time.sleep(10)
-                
                 return original_generate_content(self, *args, **kwargs)
             except exceptions.ResourceExhausted as e:
                 if attempt == max_retries - 1:
@@ -55,7 +51,7 @@ def setup_monkey_patch():
                 if attempt == max_retries - 1:
                     logger.error(f"Gemini API call failed: {str(e)}. Out of retries. Raising exception.")
                     raise e
-                delay = base_delay * (2 ** attempt) + random.uniform(1, 4)
+                delay = 3 * (2 ** attempt) + random.uniform(0, 2)
                 logger.warning(f"Gemini API call failed with error: {str(e)}. Retrying in {delay:.2f} seconds... (Attempt {attempt+1}/{max_retries})")
                 time.sleep(delay)
 

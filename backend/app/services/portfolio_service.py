@@ -17,7 +17,8 @@ class PortfolioService:
             db (Chroma): The loaded vector store database.
             
         Returns:
-            Dict[str, Any]: A dictionary containing success status, report text, and timestamp.
+            Dict[str, Any]: A dictionary containing success status, report text, structured
+                            data (holdings, sector_weights, health_score, hhi), and timestamp.
         """
         logger.info("PortfolioService.generate_report invoked.")
         timestamp = datetime.datetime.now().isoformat()
@@ -29,7 +30,11 @@ class PortfolioService:
             return {
                 "success": False,
                 "report": f"An error occurred while compiling the report: {data.get('error')}",
-                "timestamp": timestamp
+                "timestamp": timestamp,
+                "health_score": None,
+                "holdings": None,
+                "sector_weights": None,
+                "hhi": None,
             }
             
         # Format and append combined source attribution to the report
@@ -56,5 +61,10 @@ class PortfolioService:
         return {
             "success": True,
             "report": full_report,
-            "timestamp": timestamp
+            "timestamp": timestamp,
+            # Structured data for frontend dynamic panels
+            "health_score": data.get("health_score"),
+            "holdings": data.get("holdings"),
+            "sector_weights": data.get("sector_weights"),
+            "hhi": data.get("hhi"),
         }

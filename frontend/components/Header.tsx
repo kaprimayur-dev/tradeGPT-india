@@ -1,9 +1,76 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { useState, useEffect, useRef } from "react";
+import { api, ResearchResponse, MarketDataResponse } from "../app/api";
 
 export default function Header() {
   const pathname = usePathname();
+  const fetchedRef = useRef(false);
+  
+  // States for market data indices
+  const [marketData, setMarketData] = useState<MarketDataResponse | null>(null);
+  
+  // States for selected stock research (for Research header stats)
+  const [researchData, setResearchData] = useState<ResearchResponse | null>(null);
+
+  // Notification panel state
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
+
+  // Fetch index rates for default layout — called once, no polling (page manages its own updates)
+  const fetchMarketData = async () => {
+    try {
+      const data = await api.getMarketData();
+      if (data.success) {
+        setMarketData(data);
+      }
+    } catch (e) {
+      console.warn("Failed to fetch market indices in Header:", e);
+    }
+  };
+
+  useEffect(() => {
+    // Fetch market data once on mount with a slight delay to avoid collision with page's own fetch.
+    // No polling — the Market Intelligence page handles live price tick simulation.
+    if (fetchedRef.current) return;
+    fetchedRef.current = true;
+    const timer = setTimeout(fetchMarketData, 1500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    // Listen for symbolChanged event (dispatched by Research page after a query runs)
+    // to update header research stats from page-level cache — no duplicate API call.
+    if (!pathname.startsWith("/institutional-research")) return;
+    
+    const handleSymbolChange = () => {
+      if (typeof window === "undefined") return;
+      const params = new URLSearchParams(window.location.search);
+      const sym = params.get("symbol");
+      if (sym && (window as any).__tradeGPTResearchCache?.[sym]) {
+        setResearchData((window as any).__tradeGPTResearchCache[sym]);
+      }
+    };
+
+    window.addEventListener("symbolChanged", handleSymbolChange);
+    return () => window.removeEventListener("symbolChanged", handleSymbolChange);
+  }, [pathname]);
+
+  // Dynamic variables for Default header
+  const niftyPrice = marketData?.indices?.NIFTY?.price || 24013.10;
+  const niftyChange = marketData?.indices?.NIFTY?.change || -0.64;
+  const sensexPrice = marketData?.indices?.SENSEX?.price || 76802.90;
+  const sensexChange = marketData?.indices?.SENSEX?.change || -0.78;
+  const usdinrPrice = marketData?.indices?.USDINR?.price || 83.50;
+  const usdinrChange = marketData?.indices?.USDINR?.change || -0.02;
+
+  // Dynamic variables for Research header
+  const symbolName = researchData?.symbol || "RELIANCE";
+  const priceVal = researchData?.price || 2984.45;
+  const changeVal = researchData?.change || -0.42;
+  const mktCapVal = researchData?.mkt_cap || "20.21T";
+  const peRatioVal = researchData?.pe_ratio || 28.4;
+  const betaVal = researchData?.beta || 0.92;
 
   // 1. Portfolio Intelligence layout style
   if (pathname.startsWith("/portfolio-intelligence")) {
@@ -15,15 +82,44 @@ export default function Header() {
           <span className="text-xs text-[#434655] font-bold uppercase tracking-widest opacity-60">Intelligence Terminal</span>
         </div>
         <div className="flex items-center gap-6">
-          <div className="relative cursor-pointer group">
-            <span className="material-symbols-outlined text-[#434655] group-hover:text-[#004ac6] transition-colors !text-[1.25rem]">
-              notifications
-            </span>
-            <span className="absolute top-0 right-0 w-1.5 h-1.5 bg-[#ba1a1a] rounded-full"></span>
+          <div className="relative">
+            <button
+              onClick={() => setShowNotifPanel((v) => !v)}
+              className="relative cursor-pointer group p-1"
+              aria-label="Notifications"
+            >
+              <span className="material-symbols-outlined text-[#434655] group-hover:text-[#004ac6] transition-colors !text-[1.25rem]">
+                notifications
+              </span>
+              <span className="absolute top-0 right-0 w-1.5 h-1.5 bg-[#10b981] rounded-full"></span>
+            </button>
+            {showNotifPanel && (
+              <div className="absolute right-0 top-9 w-72 bg-white border border-[#c3c6d7] rounded-xl shadow-xl z-50 overflow-hidden">
+                <div className="px-4 py-3 border-b border-[#e7e7f3] flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#191b23] uppercase tracking-wider">System Notifications</span>
+                  <button onClick={() => setShowNotifPanel(false)} className="text-[#737686] hover:text-[#191b23]">
+                    <span className="material-symbols-outlined !text-sm">close</span>
+                  </button>
+                </div>
+                <div className="p-3 space-y-2">
+                  <div className="flex items-start gap-2.5 p-2 rounded-lg bg-[#f3f3fe]">
+                    <span className="w-2 h-2 rounded-full bg-[#10b981] mt-1 shrink-0"></span>
+                    <div>
+                      <p className="text-xs font-semibold text-[#191b23]">System Operational</p>
+                      <p className="text-[10px] text-[#737686]">All backend engines running normally.</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2.5 p-2 rounded-lg">
+                    <span className="w-2 h-2 rounded-full bg-[#004ac6] mt-1 shrink-0"></span>
+                    <div>
+                      <p className="text-xs font-semibold text-[#191b23]">Market Data Cached</p>
+                      <p className="text-[10px] text-[#737686]">Live indices synced. Cache TTL: 120s.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-          <span className="material-symbols-outlined text-[#434655] hover:text-[#004ac6] cursor-pointer transition-colors !text-[1.25rem]">
-            settings
-          </span>
           <div className="flex items-center gap-2 cursor-pointer border-l border-[#c3c6d7] pl-4">
             <span className="text-[11px] font-bold text-[#191b23] tracking-wide">J. HARRINGTON</span>
             <span className="material-symbols-outlined text-[#004ac6] !text-[1.4rem]" style={{ fontVariationSettings: "'FILL' 1" }}>
@@ -41,27 +137,27 @@ export default function Header() {
       <header className="no-print fixed top-0 left-[260px] right-0 h-14 bg-white border-b border-[#c3c6d7] flex items-center justify-between px-6 z-20 font-body select-none">
         <div className="flex items-center gap-8 overflow-hidden">
           <div className="flex items-center gap-2">
-            <span className="font-display text-lg tracking-tight text-[#004ac6] font-bold">RELIANCE</span>
+            <span className="font-display text-lg tracking-tight text-[#004ac6] font-bold uppercase">{symbolName}</span>
             <span className="px-1.5 py-0.5 bg-[#e7e7f3] text-[9px] font-bold rounded border border-[#c3c6d7]">NSE</span>
           </div>
           <div className="flex items-center gap-5 text-xs whitespace-nowrap">
             <div className="flex flex-col">
               <span className="text-[9px] text-[#737686] uppercase font-bold leading-tight">Price</span>
               <span className="font-bold text-[#191b23] font-mono">
-                ₹2,984.45 <span className="text-[#ba1a1a] text-[10px] font-semibold">-0.42%</span>
+                ₹{priceVal.toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className={`text-[10px] font-semibold ${changeVal >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>{changeVal >= 0 ? "+" : ""}{changeVal.toFixed(2)}%</span>
               </span>
             </div>
             <div className="flex flex-col">
               <span className="text-[9px] text-[#737686] uppercase font-bold leading-tight">Mkt Cap</span>
-              <span className="font-semibold text-[#434655] font-mono">20.21T</span>
+              <span className="font-semibold text-[#434655] font-mono">{mktCapVal}</span>
             </div>
             <div className="flex flex-col">
               <span className="text-[9px] text-[#737686] uppercase font-bold leading-tight">P/E (TTM)</span>
-              <span className="font-semibold text-[#434655] font-mono">28.4x</span>
+              <span className="font-semibold text-[#434655] font-mono">{peRatioVal ? peRatioVal.toFixed(1) : "N/A"}x</span>
             </div>
             <div className="flex flex-col">
               <span className="text-[9px] text-[#737686] uppercase font-bold leading-tight">Beta</span>
-              <span className="font-semibold text-[#434655] font-mono">0.92</span>
+              <span className="font-semibold text-[#434655] font-mono">{betaVal.toFixed(2)}</span>
             </div>
           </div>
         </div>
@@ -71,20 +167,49 @@ export default function Header() {
             <input
               type="text"
               placeholder="Search instruments..."
-              className="bg-transparent border-none p-0 text-xs text-[#191b23] w-36 focus:outline-none focus:ring-0"
+              className="bg-transparent border-none p-0 text-xs text-[#191b23] w-36 focus:outline-none focus:ring-0 uppercase font-mono font-semibold"
               readOnly
-              value="RELIANCE"
+              value={symbolName}
             />
           </div>
           <div className="flex items-center gap-1">
-            <button className="p-1.5 text-[#434655] hover:bg-[#f3f3fe] rounded-full transition-colors">
-              <span className="material-symbols-outlined !text-[1.25rem]">notifications</span>
-            </button>
-            <button className="p-1.5 text-[#434655] hover:bg-[#f3f3fe] rounded-full transition-colors">
-              <span className="material-symbols-outlined !text-[1.25rem]">history</span>
-            </button>
+            <div className="relative">
+              <button 
+                onClick={() => setShowNotifPanel((v) => !v)}
+                className="p-1.5 text-[#434655] hover:bg-[#f3f3fe] rounded-full transition-colors relative"
+                aria-label="Notifications"
+              >
+                <span className="material-symbols-outlined !text-[1.25rem]">notifications</span>
+                <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-[#10b981] rounded-full"></span>
+              </button>
+              {showNotifPanel && (
+                <div className="absolute right-0 top-9 w-72 bg-white border border-[#c3c6d7] rounded-xl shadow-xl z-50 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-[#e7e7f3] flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#191b23] uppercase tracking-wider">Notifications</span>
+                    <button onClick={() => setShowNotifPanel(false)} className="text-[#737686] hover:text-[#191b23]">
+                      <span className="material-symbols-outlined !text-sm">close</span>
+                    </button>
+                  </div>
+                  <div className="p-3 space-y-2">
+                    <div className="flex items-start gap-2.5 p-2 rounded-lg bg-[#f3f3fe]">
+                      <span className="w-2 h-2 rounded-full bg-[#10b981] mt-1 shrink-0"></span>
+                      <div>
+                        <p className="text-xs font-semibold text-[#191b23]">Research Engine Active</p>
+                        <p className="text-[10px] text-[#737686]">ChromaDB and RAG pipeline online.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-          <button className="px-4 py-1.5 bg-[#004ac6] text-white rounded-lg text-xs font-semibold active:opacity-90 transition-opacity">
+          <button 
+            onClick={() => {
+              const modal = document.getElementById("tradeModal");
+              if (modal) modal.classList.remove("hidden");
+            }}
+            className="px-4 py-1.5 bg-[#004ac6] text-white rounded-lg text-xs font-semibold active:opacity-90 transition-opacity"
+          >
             Execute Trade
           </button>
         </div>
@@ -99,27 +224,63 @@ export default function Header() {
         <h1 className="font-display text-base tracking-tight text-[#004ac6] font-bold">Market Intel</h1>
         <nav className="hidden lg:flex items-center gap-5 text-xs text-[#434655]">
           <span className="font-mono text-[#004ac6] font-bold border-b-2 border-[#004ac6] py-4">
-            NIFTY: 22,450.20 (+0.45%)
+            NIFTY: {niftyPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })} ({niftyChange >= 0 ? "+" : ""}{niftyChange.toFixed(2)}%)
           </span>
           <span className="font-mono hover:text-[#191b23] transition-colors cursor-pointer">
-            SENSEX: 73,810.15 (+0.38%)
+            SENSEX: {sensexPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })} ({sensexChange >= 0 ? "+" : ""}{sensexChange.toFixed(2)}%)
           </span>
           <span className="font-mono hover:text-[#191b23] transition-colors cursor-pointer">
-            USDINR: 83.12 (-0.02%)
+            USDINR: {usdinrPrice.toFixed(2)} ({usdinrChange >= 0 ? "+" : ""}{usdinrChange.toFixed(2)}%)
           </span>
         </nav>
       </div>
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-1 border-r border-[#c3c6d7] pr-4">
-          <span className="material-symbols-outlined text-[#434655] cursor-pointer hover:text-[#191b23] transition-colors !text-[1.25rem] p-1">
-            notifications
-          </span>
-          <span className="material-symbols-outlined text-[#434655] cursor-pointer hover:text-[#191b23] transition-colors !text-[1.25rem] p-1">
-            history
-          </span>
-          <span className="material-symbols-outlined text-[#434655] cursor-pointer hover:text-[#191b23] transition-colors !text-[1.25rem] p-1">
+          <div className="relative">
+            <button
+              onClick={() => setShowNotifPanel((v) => !v)}
+              className="material-symbols-outlined text-[#434655] cursor-pointer hover:text-[#191b23] transition-colors !text-[1.25rem] p-1"
+              aria-label="Notifications"
+            >
+              notifications
+            </button>
+            {showNotifPanel && (
+              <div className="absolute right-0 top-9 w-72 bg-white border border-[#c3c6d7] rounded-xl shadow-xl z-50 overflow-hidden">
+                <div className="px-4 py-3 border-b border-[#e7e7f3] flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#191b23] uppercase tracking-wider">Terminal Notifications</span>
+                  <button onClick={() => setShowNotifPanel(false)} className="text-[#737686] hover:text-[#191b23]">
+                    <span className="material-symbols-outlined !text-sm">close</span>
+                  </button>
+                </div>
+                <div className="p-3 space-y-2">
+                  <div className="flex items-start gap-2.5 p-2 rounded-lg bg-[#f3f3fe]">
+                    <span className="w-2 h-2 rounded-full bg-[#10b981] mt-1 shrink-0"></span>
+                    <div>
+                      <p className="text-xs font-semibold text-[#191b23]">Live Market Feed Active</p>
+                      <p className="text-[10px] text-[#737686]">NIFTY 50 & SENSEX data streaming. Cache TTL: 120s.</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2.5 p-2 rounded-lg">
+                    <span className="w-2 h-2 rounded-full bg-[#004ac6] mt-1 shrink-0"></span>
+                    <div>
+                      <p className="text-xs font-semibold text-[#191b23]">Backend: Tokyo-1 Node</p>
+                      <p className="text-[10px] text-[#737686]">All API routes operational. No errors detected.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          <a
+            href="https://github.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="material-symbols-outlined text-[#434655] cursor-pointer hover:text-[#191b23] transition-colors !text-[1.25rem] p-1"
+            aria-label="Documentation"
+            title="Terminal Documentation"
+          >
             help_outline
-          </span>
+          </a>
         </div>
         <button 
           onClick={() => {

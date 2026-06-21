@@ -33,10 +33,6 @@ def setup_monkey_patch(logger: logging.Logger):
         
         for attempt in range(max_retries):
             try:
-                # Proactive rate-limiting cooldown delay: sleep 10s between LLM invocations to prevent hitting free tier limit
-                if attempt == 0:
-                    time.sleep(10)
-                
                 return original_generate_content(self, *args, **kwargs)
             except exceptions.ResourceExhausted as e:
                 if attempt == max_retries - 1:
@@ -46,11 +42,11 @@ def setup_monkey_patch(logger: logging.Logger):
                 logger.warning(f"Gemini API rate limit hit (429). Retrying in {delay:.2f} seconds... (Attempt {attempt+1}/{max_retries})")
                 time.sleep(delay)
             except Exception as e:
-                # Handle other transient connection/API errors
+                # Handle other transient connection/API errors with a short backoff
                 if attempt == max_retries - 1:
                     logger.error(f"Gemini API call failed: {str(e)}. Out of retries. Raising exception.")
                     raise e
-                delay = base_delay * (2 ** attempt) + random.uniform(1, 4)
+                delay = 3 * (2 ** attempt) + random.uniform(0, 2)
                 logger.warning(f"Gemini API call failed with error: {str(e)}. Retrying in {delay:.2f} seconds... (Attempt {attempt+1}/{max_retries})")
                 time.sleep(delay)
 
@@ -306,11 +302,25 @@ def generate_master_report_data(portfolio_str: str, db: Chroma, logger: logging.
                     
         rag_list.sort(key=lambda x: (x["filename"], x["page"]))
         
+        # Parse health score from the report text (look for numeric score near 'health score')
+        import re as _re
+        health_score = 65  # default
+        score_match = _re.search(r'(?:health\s+score|score)[:\s]+([0-9]{1,3})(?:\s*/\s*100)?', response.text, _re.IGNORECASE)
+        if score_match:
+            parsed = int(score_match.group(1))
+            if 0 <= parsed <= 100:
+                health_score = parsed
+        
         return {
             "success": True,
             "report": response.text.strip(),
             "news": news_list,
-            "rag_sources": rag_list
+            "rag_sources": rag_list,
+            # Structured data for frontend panels
+            "holdings": holdings,
+            "sector_weights": metrics["sector_weights"],
+            "hhi": metrics["hhi"],
+            "health_score": health_score,
         }
         
     except Exception as e:

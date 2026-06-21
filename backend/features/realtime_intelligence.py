@@ -283,12 +283,28 @@ def generate_realtime_intelligence_report_data(
     }
 
 
+import threading
+import time
+
+_market_data_cache = None
+_market_data_cache_time = 0
+_market_data_lock = threading.Lock()
+CACHE_DURATION_SECS = 120 # 2 minutes cache
+
 def fetch_market_snapshot(logger: logging.Logger = None) -> dict:
     """Fetches indices, market breadth, sectoral changes, and news snapshot for Indian stock market."""
+    global _market_data_cache, _market_data_cache_time
+    
     if logger is None:
         logger = logging.getLogger("RealTimeIntelligence")
         
-    logger.info("fetch_market_snapshot invoked")
+    current_time = time.time()
+    with _market_data_lock:
+        if _market_data_cache is not None and (current_time - _market_data_cache_time) < CACHE_DURATION_SECS:
+            logger.info("Serving market data snapshot from cache")
+            return _market_data_cache
+
+    logger.info("fetch_market_snapshot invoked - cache missed or expired")
     
     indices = {
         "NIFTY": {"price": 24000.0, "change": 0.0},
@@ -302,44 +318,7 @@ def fetch_market_snapshot(logger: logging.Logger = None) -> dict:
         "USDINR": "USDINR=X"
     }
     
-    for key, ticker_symbol in indices_mapping.items():
-        try:
-            ticker_obj = yf.Ticker(ticker_symbol)
-            hist = ticker_obj.history(period="2d")
-            if not hist.empty:
-                indices[key]["price"] = round(float(hist["Close"].iloc[-1]), 2)
-                if len(hist) > 1:
-                    prev = float(hist["Close"].iloc[-2])
-                    curr = float(hist["Close"].iloc[-1])
-                    indices[key]["change"] = round(((curr - prev) / prev) * 100, 2)
-        except Exception as e:
-            logger.error(f"Error fetching index {key} ({ticker_symbol}): {str(e)}")
-            
-    advancing = 0
-    declining = 0
     sample_tickers = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", "BHARTIARTL.NS", "SBIN.NS", "ITC.NS", "LT.NS", "HCLTECH.NS"]
-    
-    logger.info("Computing market breadth from sample tickers...")
-    for sym in sample_tickers:
-        try:
-            t_obj = yf.Ticker(sym)
-            hist = t_obj.history(period="2d")
-            if len(hist) > 1:
-                change = hist["Close"].iloc[-1] - hist["Close"].iloc[-2]
-                if change > 0:
-                    advancing += 1
-                else:
-                    declining += 1
-            else:
-                advancing += 1
-        except Exception as e:
-            logger.error(f"Error checking breadth ticker {sym}: {str(e)}")
-            
-    if advancing == 0 and declining == 0:
-        advancing = 32
-        declining = 18
-        
-    breadth = {"advancing": advancing, "declining": declining}
     
     sector_mapping = {
         "Financial Services": ("^CNXFIN", 35.0),
@@ -351,21 +330,70 @@ def fetch_market_snapshot(logger: logging.Logger = None) -> dict:
         "Metals & Mining": ("^CNXMETAL", 3.5),
         "Infrastructure": ("^CNXINFRA", 4.0)
     }
+
+    all_tickers = list(indices_mapping.values()) + sample_tickers + [sym for sym, _ in sector_mapping.values()]
+    
+    logger.info(f"Downloading batch of {len(all_tickers)} tickers in 1 yfinance call...")
+    df = None
+    try:
+        df = yf.download(all_tickers, period="2d", group_by="ticker", progress=False, timeout=5)
+    except Exception as e:
+        logger.error(f"yfinance batch download failed or timed out: {str(e)}")
+
+    for key, ticker_symbol in indices_mapping.items():
+        try:
+            if df is not None and ticker_symbol in df:
+                hist = df[ticker_symbol]["Close"].dropna()
+                if not hist.empty:
+                    indices[key]["price"] = round(float(hist.iloc[-1]), 2)
+                    if len(hist) > 1:
+                        prev = float(hist.iloc[-2])
+                        curr = float(hist.iloc[-1])
+                        indices[key]["change"] = round(((curr - prev) / prev) * 100, 2)
+        except Exception as e:
+            logger.error(f"Error parsing index {key} from batch: {str(e)}")
+            
+    advancing = 0
+    declining = 0
+    for sym in sample_tickers:
+        try:
+            if df is not None and sym in df:
+                hist = df[sym]["Close"].dropna()
+                if len(hist) > 1:
+                    change = hist.iloc[-1] - hist.iloc[-2]
+                    if change > 0:
+                        advancing += 1
+                    else:
+                        declining += 1
+                else:
+                    advancing += 1
+            else:
+                advancing += 1
+        except Exception as e:
+            logger.error(f"Error checking breadth ticker {sym} from batch: {str(e)}")
+            
+    if advancing == 0 and declining == 0:
+        advancing = 32
+        declining = 18
+        
+    breadth = {"advancing": advancing, "declining": declining}
     
     sectors = []
     for name, (ticker_symbol, weight) in sector_mapping.items():
         change_val = 0.0
         try:
-            ticker_obj = yf.Ticker(ticker_symbol)
-            hist = ticker_obj.history(period="2d")
-            if len(hist) > 1:
-                prev = float(hist["Close"].iloc[-2])
-                curr = float(hist["Close"].iloc[-1])
-                change_val = round(((curr - prev) / prev) * 100, 2)
-            elif not hist.empty:
+            if df is not None and ticker_symbol in df:
+                hist = df[ticker_symbol]["Close"].dropna()
+                if len(hist) > 1:
+                    prev = float(hist.iloc[-2])
+                    curr = float(hist.iloc[-1])
+                    change_val = round(((curr - prev) / prev) * 100, 2)
+                elif not hist.empty:
+                    change_val = 0.05
+            else:
                 change_val = 0.05
         except Exception as e:
-            logger.error(f"Error fetching sector {name} ({ticker_symbol}): {str(e)}")
+            logger.error(f"Error parsing sector {name} from batch: {str(e)}")
             change_val = 0.1
             
         sectors.append({
@@ -377,9 +405,21 @@ def fetch_market_snapshot(logger: logging.Logger = None) -> dict:
     news_articles = []
     try:
         nifty_obj = yf.Ticker("^NSEI")
-        raw_news = nifty_obj.news or []
-        logger.info(f"Retrieved {len(raw_news)} raw news articles for Nifty")
         
+        import concurrent.futures
+        logger.info("Fetching Nifty news with 2.0s timeout protection...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(lambda: nifty_obj.news)
+            try:
+                raw_news = future.result(timeout=2.0) or []
+                logger.info(f"Retrieved {len(raw_news)} raw news articles for Nifty")
+            except concurrent.futures.TimeoutError:
+                logger.warning("Nifty news fetch timed out after 2.0 seconds")
+                raw_news = []
+            except Exception as ex:
+                logger.error(f"Failed to get news from thread: {str(ex)}")
+                raw_news = []
+                
         for article in raw_news[:10]:
             content = article.get("content", {})
             title = content.get("title") or article.get("title") or "Untitled"
@@ -424,7 +464,7 @@ def fetch_market_snapshot(logger: logging.Logger = None) -> dict:
             "summary": "The Indian benchmark indices showed high volatility but managed to defend key support levels. FMCG and Pharma led gains."
         })
         
-    return {
+    response = {
         "success": True,
         "indices": indices,
         "breadth": breadth,
@@ -432,6 +472,12 @@ def fetch_market_snapshot(logger: logging.Logger = None) -> dict:
         "news": news_articles,
         "timestamp": datetime.datetime.now().isoformat()
     }
+    
+    with _market_data_lock:
+        _market_data_cache = response
+        _market_data_cache_time = time.time()
+        
+    return response
 
 
 def generate_realtime_intelligence_report(

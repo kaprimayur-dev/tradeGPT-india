@@ -1,0 +1,288 @@
+import os
+import sys
+import logging
+from typing import List, Tuple, Dict, Any
+from dotenv import load_dotenv
+
+# Ensure the backend directory is in the python path for importing modules properly
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
+
+# Load configuration environment variables from .env
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+
+import google.generativeai as genai
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_core.documents import Document
+
+# --- Configuration Constants ---
+CHROMA_DB_DIR = os.getenv("RAG_CHROMA_DB_DIR", os.path.join(PROJECT_ROOT, "backend", "chromadb_store"))
+EMBEDDING_MODEL_NAME = os.getenv("RAG_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+CHROMA_COLLECTION_NAME = os.getenv("RAG_COLLECTION_NAME", "trade_gpt_reports")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+# Configure Google Generative AI
+API_KEY = os.getenv("GEMINI_API_KEY")
+if not API_KEY:
+    raise ValueError("GEMINI_API_KEY environment variable not found. Please set it in your .env file.")
+genai.configure(api_key=API_KEY)
+
+# --- Grounded Retrieval Prompt ---
+PROMPT_TEMPLATE = """You are TradeGPT India, a Financial Intelligence Copilot for Indian retail investors. 
+Answer the user's question using ONLY the provided context from annual reports. 
+Do not make assumptions, extrapolate, or use outside knowledge. 
+If the provided context does not contain the answer, state clearly: "I cannot answer this question based on the provided annual reports."
+
+CONTEXT:
+{context}
+
+QUESTION:
+{question}
+
+ANSWER:"""
+
+
+def setup_logging() -> logging.Logger:
+    """Sets up Python's logging utilities to log to both stdout and a file.
+    
+    Returns:
+        logging.Logger: Configured logger for RAG querying.
+    """
+    log_format = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+    logger = logging.getLogger("RAGQuery")
+    logger.setLevel(logging.INFO)
+    
+    # Avoid duplicate handlers if setup_logging is called multiple times
+    if not logger.handlers:
+        # Console output
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setFormatter(logging.Formatter(log_format))
+        logger.addHandler(stream_handler)
+        
+        # File output (saved inside backend folder)
+        log_file_path = os.path.join(PROJECT_ROOT, "backend", "rag_query.log")
+        file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
+        file_handler.setFormatter(logging.Formatter(log_format))
+        logger.addHandler(file_handler)
+        
+    return logger
+
+
+def load_vector_store(
+    db_dir: str, 
+    collection_name: str, 
+    model_name: str, 
+    logger: logging.Logger
+) -> Chroma:
+    """Loads the existing Chroma vector store from disk.
+    
+    Args:
+        db_dir (str): Directory containing persisted database files.
+        collection_name (str): Collection name to load.
+        model_name (str): Model name for computing query embeddings.
+        logger (logging.Logger): Logger instance.
+        
+    Returns:
+        Chroma: Loaded Chroma vector store.
+    """
+    logger.info(f"Initializing embedding model: {model_name}")
+    try:
+        embeddings = HuggingFaceEmbeddings(model_name=model_name)
+    except Exception as e:
+        logger.error(f"Failed to load embedding model '{model_name}': {str(e)}", exc_info=True)
+        raise e
+        
+    logger.info(f"Loading ChromaDB database from: {db_dir}")
+    if not os.path.exists(db_dir):
+        logger.error(f"ChromaDB directory '{db_dir}' not found. Please run data ingestion first.")
+        raise FileNotFoundError(f"ChromaDB store not found at {db_dir}")
+        
+    try:
+        db = Chroma(
+            persist_directory=db_dir,
+            embedding_function=embeddings,
+            collection_name=collection_name
+        )
+        logger.info("ChromaDB vector store loaded successfully.")
+        return db
+    except Exception as e:
+        logger.error(f"Failed to load ChromaDB vector store: {str(e)}", exc_info=True)
+        raise e
+
+
+def retrieve_relevant_chunks(
+    query: str, 
+    db: Chroma, 
+    k: int, 
+    logger: logging.Logger
+) -> List[Tuple[Document, float]]:
+    """Performs semantic similarity search to retrieve top-k matching chunks.
+    
+    Args:
+        query (str): User's question.
+        db (Chroma): Loaded vector store database.
+        k (int): Number of chunks to retrieve.
+        logger (logging.Logger): Logger instance.
+        
+    Returns:
+        List[Tuple[Document, float]]: List of retrieved documents with their distance scores.
+    """
+    logger.info(f"Retrieving top {k} relevant chunks for query: '{query}'")
+    try:
+        results = db.similarity_search_with_score(query, k=k)
+        logger.info(f"Successfully retrieved {len(results)} chunks from ChromaDB.")
+        
+        for i, (doc, score) in enumerate(results):
+            filename = doc.metadata.get("source_filename", "unknown")
+            page = doc.metadata.get("page", 0) + 1
+            logger.info(f"  [{i+1}] Doc: {filename} | Page: {page} | Score: {score:.4f}")
+            
+        return results
+    except Exception as e:
+        logger.error(f"Error during context retrieval: {str(e)}", exc_info=True)
+        raise e
+
+
+def generate_grounded_answer(
+    query: str, 
+    retrieved_results: List[Tuple[Document, float]], 
+    logger: logging.Logger
+) -> str:
+    """Constructs prompt using context blocks and queries Gemini for a grounded answer.
+    
+    Args:
+        query (str): User's question.
+        retrieved_results (List[Tuple[Document, float]]): Retrieved contexts and distance scores.
+        logger (logging.Logger): Logger instance.
+        
+    Returns:
+        str: Grounded textual answer generated by Gemini.
+    """
+    logger.info("Structuring retrieved chunks into prompt template...")
+    context_str = ""
+    for i, (doc, _) in enumerate(retrieved_results):
+        filename = doc.metadata.get("source_filename", "unknown")
+        page = doc.metadata.get("page", 0) + 1
+        context_str += f"--- Context Block {i+1} [Source: {filename}, Page: {page}] ---\n"
+        context_str += doc.page_content.strip() + "\n\n"
+        
+    prompt = PROMPT_TEMPLATE.format(context=context_str, question=query)
+    
+    logger.info(f"Sending prompt to Gemini model: {GEMINI_MODEL_NAME}")
+    try:
+        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+        response = model.generate_content(prompt)
+        logger.info("Successfully received LLM response.")
+        return response.text
+    except Exception as e:
+        logger.error(f"Error calling Gemini API: {str(e)}", exc_info=True)
+        raise e
+
+
+def extract_sources(retrieved_results: List[Tuple[Document, float]]) -> List[Dict[str, Any]]:
+    """Extracts unique source filenames and page numbers from retrieved metadata.
+    
+    Args:
+        retrieved_results (List[Tuple[Document, float]]): Retrieved document segments.
+        
+    Returns:
+        List[Dict[str, Any]]: List of dictionaries containing unique 'filename' and 'page' keys.
+    """
+    seen_sources = set()
+    unique_sources = []
+    
+    for doc, _ in retrieved_results:
+        filename = doc.metadata.get("source_filename", "unknown")
+        page = doc.metadata.get("page", 0) + 1
+        source_key = (filename, page)
+        
+        if source_key not in seen_sources:
+            seen_sources.add(source_key)
+            unique_sources.append({"filename": filename, "page": page})
+            
+    # Sort source items by filename then page number
+    unique_sources.sort(key=lambda x: (x["filename"], x["page"]))
+    return unique_sources
+
+
+def run_query(query: str, db: Chroma, logger: logging.Logger):
+    """Executes search, generation, source formatting, and prints the CLI output.
+    
+    Args:
+        query (str): Question to answer.
+        db (Chroma): Loaded vector store.
+        logger (logging.Logger): Logger instance.
+    """
+    try:
+        # 1. Retrieve top 5 contexts
+        retrieved_results = retrieve_relevant_chunks(query, db, k=5, logger=logger)
+        
+        if not retrieved_results:
+            print("\nAnswer:\nNo relevant context was found in the annual reports database.")
+            print("\nSources:\nNone")
+            return
+            
+        # 2. Call Gemini for grounded output
+        answer = generate_grounded_answer(query, retrieved_results, logger)
+        
+        # 3. Extract unique source metadata
+        sources = extract_sources(retrieved_results)
+        
+        print("\nAnswer:")
+        print(answer.strip())
+        print("\nSources:")
+        if sources:
+            for src in sources:
+                print(f"Page {src['page']} (from {src['filename']})")
+        else:
+            print("No source pages attributed.")
+        print()
+        
+    except Exception as e:
+        print(f"\nAn error occurred while processing the query: {str(e)}")
+
+
+def main():
+    """Main CLI program entry point."""
+    logger = setup_logging()
+    logger.info("=== Starting TradeGPT RAG Query Interface ===")
+    
+    try:
+        db = load_vector_store(CHROMA_DB_DIR, CHROMA_COLLECTION_NAME, EMBEDDING_MODEL_NAME, logger)
+    except Exception as e:
+        logger.critical(f"Initialization failed: {str(e)}")
+        sys.exit(1)
+        
+    if len(sys.argv) > 1:
+        # Running directly with prompt as an argument
+        query = " ".join(sys.argv[1:])
+        print(f"Question:\n{query}")
+        run_query(query, db, logger)
+    else:
+        # Running interactive prompt shell
+        print("="*60)
+        print("TradeGPT India Financial Intelligence Copilot RAG Shell 🚀")
+        print("Type 'exit', 'quit', or 'q' to end the session.")
+        print("="*60)
+        
+        while True:
+            try:
+                print("\nEnter your question:")
+                query = input("> ").strip()
+                if not query:
+                    continue
+                if query.lower() in ["exit", "quit", "q"]:
+                    print("Exiting RAG Shell. Goodbye!")
+                    break
+                    
+                run_query(query, db, logger)
+            except (KeyboardInterrupt, EOFError):
+                print("\nExiting RAG Shell. Goodbye!")
+                break
+
+
+if __name__ == "__main__":
+    main()
