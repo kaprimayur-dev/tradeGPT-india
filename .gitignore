@@ -40,3 +40,9 @@ logs/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Temporary / Scratch scripts
+backend/scratch_test.py
+backend/test_gemini.py
+verify_chroma_1.py
+tore --staged*
