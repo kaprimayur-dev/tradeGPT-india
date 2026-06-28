@@ -47,8 +47,9 @@ export default function Header() {
       if (typeof window === "undefined") return;
       const params = new URLSearchParams(window.location.search);
       const sym = params.get("symbol");
-      if (sym && (window as any).__tradeGPTResearchCache?.[sym]) {
-        setResearchData((window as any).__tradeGPTResearchCache[sym]);
+      const w = window as Window & { __tradeGPTResearchCache?: Record<string, ResearchResponse> };
+      if (sym && w.__tradeGPTResearchCache?.[sym]) {
+        setResearchData(w.__tradeGPTResearchCache[sym] as ResearchResponse);
       }
     };
 

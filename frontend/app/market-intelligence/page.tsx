@@ -14,7 +14,6 @@ export default function MarketIntelligencePage() {
   const [selectedIndex, setSelectedIndex] = useState<"NIFTY" | "SENSEX">("NIFTY");
   const [isIndexDropdownOpen, setIsIndexDropdownOpen] = useState(false);
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const [orderType, setOrderType] = useState<"BUY" | "SELL">("BUY");
   const [orderSubmitted, setOrderSubmitted] = useState<string | null>(null);
   const [showFullscreenHint, setShowFullscreenHint] = useState(false);
@@ -65,14 +64,16 @@ export default function MarketIntelligencePage() {
           setUsdinrChange(data.indices["USDINR"].change);
         }
       }
-    } catch (err: any) {
-      setError(err.message || "Failed to load live market data");
+    } catch (err: unknown) {
+      const e = err as Error;
+      setError(e.message || "Failed to load live market data");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData();
   }, []);
 
@@ -296,6 +297,7 @@ export default function MarketIntelligencePage() {
                 <span className="text-[#434655]">H: <span className="font-semibold text-[#191b23]">{(currentIndexPrice * 1.002).toFixed(2)}</span></span>
                 <span className="text-[#434655]">L: <span className="font-semibold text-[#191b23]">{(currentIndexPrice * 0.995).toFixed(2)}</span></span>
                 <span className="text-[#434655]">C: <span className="font-semibold text-[#004ac6]">{currentIndexPrice.toFixed(2)}</span></span>
+                <span className="col-span-2 text-[#434655]">Chg: <span className={`font-semibold ${currentIndexChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>{currentIndexChange >= 0 ? "+" : ""}{currentIndexChange.toFixed(2)}%</span></span>
               </div>
             </div>
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { api } from "../api";
+import { api, ResearchResponse } from "../api";
 
 export default function InstitutionalResearchPage() {
   const [searchSymbol, setSearchSymbol] = useState("RELIANCE");
@@ -93,14 +93,16 @@ export default function InstitutionalResearchPage() {
         }
         // Cache in global window for Header to consume without duplicate API call
         if (typeof window !== "undefined") {
-          (window as any).__tradeGPTResearchCache = (window as any).__tradeGPTResearchCache || {};
-          (window as any).__tradeGPTResearchCache[symbol.toUpperCase()] = res;
+          const w = window as Window & { __tradeGPTResearchCache?: Record<string, ResearchResponse> };
+          w.__tradeGPTResearchCache = w.__tradeGPTResearchCache || {};
+          w.__tradeGPTResearchCache[symbol.toUpperCase()] = res;
         }
       } else {
         throw new Error("Failed to compile research");
       }
-    } catch (err: any) {
-      setError(err.message || "An error occurred during equity research");
+    } catch (err: unknown) {
+      const e = err as Error;
+      setError(e.message || "An error occurred during equity research");
     } finally {
       setLoading(false);
     }
@@ -121,16 +123,19 @@ export default function InstitutionalResearchPage() {
   };
 
   useEffect(() => {
+    // Read URL parameter without calling setState synchronously inside effect
+    let initialSymbol = searchSymbol;
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const symbolFromUrl = params.get("symbol");
       if (symbolFromUrl) {
-        setSearchSymbol(symbolFromUrl);
-        runSearch(symbolFromUrl);
-        return;
+        initialSymbol = symbolFromUrl;
       }
     }
-    handleRunResearch();
+    // Run search — this is async; symbol is passed as parameter, no sync setState needed
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    runSearch(initialSymbol);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

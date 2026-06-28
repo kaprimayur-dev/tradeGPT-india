@@ -3,7 +3,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 /**
  * Reusable fetch wrapper with automatic retry support and exponential backoff.
  */
-async function fetchWithRetry(url: string, options: RequestInit = {}, retries = 3, delay = 1000): Promise<any> {
+async function fetchWithRetry(url: string, options: RequestInit = {}, retries = 3, delay = 1000): Promise<unknown> {
   try {
     const res = await fetch(url, {
       ...options,
@@ -16,21 +16,22 @@ async function fetchWithRetry(url: string, options: RequestInit = {}, retries = 
     if (!res.ok) {
       let errorMessage = `HTTP error! status: ${res.status}`;
       try {
-        const errorJson = await res.json();
+        const errorJson = await res.json() as { detail?: string };
         errorMessage = errorJson.detail || errorMessage;
       } catch {
         try {
           const errorText = await res.text();
           errorMessage = errorText || errorMessage;
-        } catch {}
+        } catch {/* ignore secondary parse errors */}
       }
       throw new Error(errorMessage);
     }
 
     return await res.json();
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as Error;
     if (retries > 0) {
-      console.warn(`Fetch to ${url} failed: ${error.message}. Retrying in ${delay}ms... (${retries} retries left)`);
+      console.warn(`Fetch to ${url} failed: ${err.message}. Retrying in ${delay}ms... (${retries} retries left)`);
       await new Promise((resolve) => setTimeout(resolve, delay));
       return fetchWithRetry(url, options, retries - 1, delay * 1.5);
     }
@@ -168,7 +169,7 @@ export const api = {
    * GET /market-data
    */
   async getMarketData(): Promise<MarketDataResponse> {
-    return fetchWithRetry(`${API_BASE_URL}/market-data`, { method: "GET" });
+    return fetchWithRetry(`${API_BASE_URL}/market-data`, { method: "GET" }) as Promise<MarketDataResponse>;
   },
 
   /**
@@ -178,7 +179,7 @@ export const api = {
     return fetchWithRetry(`${API_BASE_URL}/analyze`, {
       method: "POST",
       body: JSON.stringify({ portfolio }),
-    });
+    }) as Promise<PortfolioResponse>;
   },
 
   /**
@@ -188,7 +189,7 @@ export const api = {
     return fetchWithRetry(`${API_BASE_URL}/research`, {
       method: "POST",
       body: JSON.stringify({ symbol }),
-    });
+    }) as Promise<ResearchResponse>;
   },
 
   /**
@@ -208,6 +209,6 @@ export const api = {
         period,
         initial_capital: initialCapital,
       }),
-    });
+    }) as Promise<BacktestResponse>;
   },
 };

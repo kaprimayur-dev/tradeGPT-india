@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { api, PortfolioResponse } from "../api";
 
 // Color palette for sector bars
@@ -38,33 +38,41 @@ export default function PortfolioIntelligencePage() {
   }, [result]);
 
   const handleRunAnalysis = async () => {
-    if (!portfolioInput.trim()) return;
+    const trimmed = portfolioInput.trim();
+    if (!trimmed) {
+      setError("Please enter at least one stock allocation (e.g. TCS 60).");
+      return;
+    }
+    // Validate lines: each must be "SYMBOL NUMBER" format
+    const lines = trimmed.split("\n").map(l => l.trim()).filter(Boolean);
+    for (const line of lines) {
+      const parts = line.split(/\s+/);
+      if (parts.length < 2) {
+        setError(`Invalid entry "${line}" — expected format: SYMBOL WEIGHT (e.g. TCS 60)`);
+        return;
+      }
+      const weight = parseFloat(parts[parts.length - 1]);
+      if (isNaN(weight) || weight < 0) {
+        setError(`Invalid weight in "${line}" — weights must be non-negative numbers.`);
+        return;
+      }
+    }
+
     setLoading(true);
     setError(null);
     setAnimateWidth(false);
-    console.log("[Portfolio] Request payload:", { portfolio: portfolioInput });
 
     try {
       const res = await api.analyzePortfolio(portfolioInput);
-      console.log("[Portfolio] Response received:", {
-        success: res.success,
-        health_score: res.health_score,
-        holdings: res.holdings,
-        sector_weights: res.sector_weights,
-        hhi: res.hhi,
-        reportLength: res.report?.length,
-        timestamp: res.timestamp,
-      });
-
       if (res.success) {
         setResult(res);
         setTimeout(() => setAnimateWidth(true), 50);
       } else {
         throw new Error("Failed to diagnose portfolio");
       }
-    } catch (err: any) {
-      console.error("[Portfolio] Error:", err);
-      setError(err.message || "An error occurred during portfolio diagnosis");
+    } catch (err: unknown) {
+      const e = err as Error;
+      setError(e.message || "An error occurred during portfolio diagnosis");
     } finally {
       setLoading(false);
     }
@@ -166,9 +174,9 @@ export default function PortfolioIntelligencePage() {
               <span>{loading ? "Orchestrating..." : "Diagnose Portfolio"}</span>
             </button>
           </div>
-          {/* Realtime console hint */}
+          {/* Realtime console hint removed — data validates server-side */}
           <p className="text-[9px] text-[#737686] mt-2 font-mono">
-            ℹ Opens browser console (F12) to see full request/response payloads during analysis.
+            ℹ One stock per line. Format: SYMBOL WEIGHT (e.g. TCS 60). Weights need not sum to 100.
           </p>
         </div>
 
@@ -335,7 +343,7 @@ export default function PortfolioIntelligencePage() {
                     </thead>
                     <tbody className="divide-y divide-[#e7e7f3] font-medium text-[#191b23]">
                       {topHoldings && topHoldings.length > 0 ? (
-                        topHoldings.map(([symbol, weight], idx) => {
+                        topHoldings.map(([symbol, weight]) => {
                           const isHigh = weight > 40;
                           const isMed = weight > 20 && !isHigh;
                           return (

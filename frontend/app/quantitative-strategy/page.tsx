@@ -24,15 +24,18 @@ export default function QuantitativeStrategyPage() {
       } else {
         throw new Error(res.report || "Backtest execution failed.");
       }
-    } catch (err: any) {
-      setError(err.message || "An unexpected error occurred during backtesting");
+    } catch (err: unknown) {
+      const e = err as Error;
+      setError(e.message || "An unexpected error occurred during backtesting");
     } finally {
       setIsRunning(false);
     }
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     handleRunBacktest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Generate SVG path for chart data
