@@ -29,9 +29,15 @@ def run_backtest(payload: BacktestRequest, request: Request):
             initial_capital=payload.initial_capital
         )
         if not result["success"]:
+            err_msg = result.get("report", "Backtest simulation failed.")
+            if "Insufficient historical data" in err_msg or "Failed to fetch historical data" in err_msg or "Unknown strategy" in err_msg:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=err_msg.replace("Simulation failed: ", "")
+                )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=result.get("report", "Backtest simulation failed.")
+                detail=err_msg
             )
         return result
     except HTTPException:
@@ -41,3 +47,4 @@ def run_backtest(payload: BacktestRequest, request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred during backtesting: {str(e)}"
         )
+

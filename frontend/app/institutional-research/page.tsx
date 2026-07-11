@@ -135,30 +135,36 @@ export default function InstitutionalResearchPage() {
     // Run search — this is async; symbol is passed as parameter, no sync setState needed
     // eslint-disable-next-line react-hooks/set-state-in-effect
     runSearch(initialSymbol);
+
+    const handleRefresh = () => {
+      runSearch(searchSymbol);
+    };
+    window.addEventListener("refreshData", handleRefresh);
+    return () => window.removeEventListener("refreshData", handleRefresh);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [searchSymbol]);
 
   return (
-    <div className="flex-1 bg-[#faf8ff] p-6 font-body">
+    <div className="flex-1 bg-canvas p-6 font-body overflow-y-auto custom-scrollbar">
       
       {/* Search Header (No Print) */}
-      <div className="bg-white border border-[#c3c6d7] rounded-xl p-5 mb-6 shadow-sm no-print">
-        <h3 className="text-xs font-bold text-[#191b23] uppercase tracking-wider mb-2">Institutional Research Query</h3>
+      <div className="bg-surface-base border border-border-subtle rounded-xl p-5 mb-6 shadow-sm no-print">
+        <h3 className="text-xs font-bold text-text-primary uppercase tracking-wider mb-2">Institutional Research Query</h3>
         <div className="flex flex-col sm:flex-row gap-4 items-end">
           <div className="flex-1 w-full">
-            <label className="text-[10px] font-bold text-[#737686] uppercase block mb-1">Stock Ticker Symbol or Company Name</label>
+            <label className="text-[10px] font-bold text-text-muted uppercase block mb-1">Stock Ticker Symbol or Company Name</label>
             <input
               type="text"
               value={searchSymbol}
               onChange={(e) => setSearchSymbol(e.target.value)}
-              className="w-full bg-[#f3f3fe] border border-[#c3c6d7] rounded-lg px-3 py-2 text-xs text-[#191b23] font-semibold focus:border-[#004ac6] focus:ring-1 focus:ring-[#004ac6] outline-none uppercase font-mono h-10"
+              className="w-full bg-canvas border border-border-subtle rounded-lg px-3 py-2 text-xs text-text-primary font-semibold focus:border-primary outline-none uppercase font-mono h-10"
               placeholder="E.g. TCS, RELIANCE, INFY"
             />
           </div>
           <button
             onClick={handleRunResearch}
             disabled={loading}
-            className="px-6 py-2 bg-[#004ac6] text-white rounded-lg text-xs font-bold hover:bg-[#003ea8] transition-colors active:scale-95 duration-100 disabled:opacity-50 h-10 flex items-center justify-center gap-1.5 shrink-0"
+            className="px-6 py-2 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary-fixed-dim transition-colors active-press disabled:opacity-50 h-10 flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
           >
             <span className="material-symbols-outlined !text-base">search</span>
             <span>{loading ? "Researching..." : "Run Analysis"}</span>
@@ -169,10 +175,10 @@ export default function InstitutionalResearchPage() {
       <div className="grid grid-cols-12 gap-6 relative min-h-[500px]">
         {/* Loading Overlay */}
         {loading && (
-          <div className="absolute inset-0 bg-white/80 flex flex-col items-center justify-center z-30 rounded-xl">
-            <div className="w-10 h-10 border-4 border-[#004ac6] border-t-transparent rounded-full animate-spin mb-3"></div>
-            <p className="text-xs font-bold text-[#434655] uppercase tracking-wider animate-pulse">Running RAG Analyst Node...</p>
-            <p className="text-[10px] text-[#737686] mt-1 font-mono">Fetching ChromaDB context and Yahoo pricing data</p>
+          <div className="absolute inset-0 bg-surface-base/80 flex flex-col items-center justify-center z-30 rounded-xl">
+            <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin mb-3"></div>
+            <p className="text-xs font-bold text-text-muted uppercase tracking-wider animate-pulse">Running RAG Analyst Node...</p>
+            <p className="text-[10px] text-text-muted mt-1 font-mono">Fetching ChromaDB context and Yahoo pricing data</p>
           </div>
         )}
 
@@ -259,30 +265,30 @@ export default function InstitutionalResearchPage() {
               {/* Growth Drivers (Bento style) */}
               <section>
                 <div className="flex items-center gap-2 mb-4">
-                  <div className="w-1 h-5 bg-[#004ac6]"></div>
-                  <h3 className="text-xs font-bold text-[#191b23] uppercase tracking-wider">Primary Growth Drivers</h3>
+                  <div className="w-1 h-5 bg-primary"></div>
+                  <h3 className="text-xs font-bold text-text-primary uppercase tracking-wider">Primary Growth Drivers</h3>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {growthDrivers.slice(0, 2).map((driver, idx) => (
-                    <div key={idx} className="p-4 border border-[#c3c6d7] rounded-lg bg-white shadow-sm flex flex-col justify-between">
+                    <div key={idx} className="p-4 border border-border-subtle rounded-lg bg-surface-base shadow-sm flex flex-col justify-between hover:-translate-y-0.5 hover:shadow-md transition-all duration-300">
                       <div>
-                        <span className="material-symbols-outlined text-[#004ac6] mb-2 !text-base">
+                        <span className="material-symbols-outlined text-primary mb-2 !text-base">
                           {driver.icon === "bolt" ? "bolt" : driver.icon === "signal_cellular_alt" ? "signal_cellular_alt" : "trending_up"}
                         </span>
-                        <h4 className="text-xs font-bold text-[#191b23] mb-1.5">{driver.title}</h4>
-                        <p className="text-[11px] text-[#434655] leading-normal">{driver.desc}</p>
+                        <h4 className="text-xs font-bold text-text-primary mb-1.5">{driver.title}</h4>
+                        <p className="text-[11px] text-text-muted leading-normal">{driver.desc}</p>
                       </div>
                     </div>
                   ))}
                   
                   {growthDrivers.length > 2 && (
-                    <div className="p-4 border border-[#c3c6d7] rounded-lg bg-white shadow-sm col-span-1 sm:col-span-2 flex gap-4 items-center">
-                      <div className="w-16 h-16 flex-shrink-0 bg-[#f3f3fe] rounded flex items-center justify-center border border-[#c3c6d7]">
-                        <span className="material-symbols-outlined text-xl text-[#737686]">layers</span>
+                    <div className="p-4 border border-border-subtle rounded-lg bg-surface-base shadow-sm col-span-1 sm:col-span-2 flex gap-4 items-center hover:-translate-y-0.5 hover:shadow-md transition-all duration-300">
+                      <div className="w-16 h-16 flex-shrink-0 bg-canvas rounded flex items-center justify-center border border-border-subtle">
+                        <span className="material-symbols-outlined text-xl text-text-muted">layers</span>
                       </div>
                       <div>
-                        <h4 className="text-xs font-bold text-[#191b23] mb-1">{growthDrivers[2].title}</h4>
-                        <p className="text-[11px] text-[#434655] leading-normal">
+                        <h4 className="text-xs font-bold text-text-primary mb-1">{growthDrivers[2].title}</h4>
+                        <p className="text-[11px] text-text-muted leading-normal">
                           {growthDrivers[2].desc}
                         </p>
                       </div>
@@ -294,26 +300,26 @@ export default function InstitutionalResearchPage() {
               {/* Risk Matrix Table */}
               <section className="mb-6">
                 <div className="flex items-center gap-2 mb-3">
-                  <div className="w-1 h-5 bg-[#004ac6]"></div>
-                  <h3 className="text-xs font-bold text-[#191b23] uppercase tracking-wider">Risk Matrix</h3>
+                  <div className="w-1 h-5 bg-primary"></div>
+                  <h3 className="text-xs font-bold text-text-primary uppercase tracking-wider">Risk Matrix</h3>
                 </div>
-                <div className="overflow-x-auto border border-[#c3c6d7] rounded-lg shadow-sm">
-                  <table className="w-full text-xs text-left border-collapse bg-white">
+                <div className="overflow-x-auto border border-border-subtle rounded-lg shadow-sm">
+                  <table className="w-full text-xs text-left border-collapse bg-surface-base">
                     <thead>
-                      <tr className="bg-[#f3f3fe] text-[#737686] font-mono uppercase text-[9px] border-b border-[#c3c6d7] font-bold">
+                      <tr className="bg-canvas text-text-muted font-mono uppercase text-[9px] border-b border-border-subtle font-bold">
                         <th className="px-4 py-2.5">Risk Factor</th>
                         <th className="px-4 py-2.5">Impact</th>
                         <th className="px-4 py-2.5">Probability</th>
                         <th className="px-4 py-2.5 text-right">Severity Score</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#e7e7f3] text-[#434655]">
+                    <tbody className="divide-y divide-border-subtle/35 text-text-muted">
                       {riskFactors.map((risk, idx) => (
-                        <tr key={idx} className="hover:bg-[#faf8ff] transition-colors">
-                          <td className="px-4 py-3 font-semibold text-[#191b23]">{risk.factor}</td>
+                        <tr key={idx} className="hover:bg-canvas transition-colors">
+                          <td className="px-4 py-3 font-semibold text-text-primary">{risk.factor}</td>
                           <td className="px-4 py-3">{risk.impact}</td>
                           <td className="px-4 py-3">{risk.prob}</td>
-                          <td className="px-4 py-3 text-right font-mono font-bold text-[#004ac6]">{Number(risk.score).toFixed(1)}</td>
+                          <td className="px-4 py-3 text-right font-mono font-bold text-primary">{Number(risk.score).toFixed(1)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -322,46 +328,46 @@ export default function InstitutionalResearchPage() {
               </section>
             </div>
 
-            {/* Right Column (Narrow): Metrics & Citations */}
-            <div className="col-span-12 lg:col-span-4 border-l-0 lg:border-l border-[#c3c6d7] pl-0 lg:pl-6 space-y-8">
+            {/* Right Column (Narrow): Metrics & Citation */}
+            <div className="col-span-12 lg:col-span-4 border-l-0 lg:border-l border-border-subtle pl-0 lg:pl-6 space-y-8">
               
               {/* Technical Metrics */}
               <div>
-                <h3 className="text-[10px] font-bold text-[#737686] tracking-wider uppercase mb-4">
+                <h3 className="text-[10px] font-bold text-text-muted tracking-wider uppercase mb-4">
                   Technical Metrics
                 </h3>
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between border-b border-[#e7e7f3] pb-2">
-                    <span className="text-xs text-[#434655] font-medium">RSI (14-Day)</span>
+                  <div className="flex items-center justify-between border-b border-border-subtle/30 pb-2">
+                    <span className="text-xs text-text-muted font-medium">RSI (14-Day)</span>
                     <div className="flex items-center gap-2">
-                      <span className="font-mono font-bold text-[#191b23]">{technicalMetrics.rsi.toFixed(2)}</span>
-                      <div className="w-12 h-1.5 bg-[#e7e7f3] rounded-full overflow-hidden shrink-0">
-                        <span className="block h-full bg-[#004ac6]" style={{ width: `${Math.min(100, Math.max(0, technicalMetrics.rsi))}%` }}></span>
+                      <span className="font-mono font-bold text-text-primary">{technicalMetrics.rsi.toFixed(2)}</span>
+                      <div className="w-12 h-1.5 bg-border-subtle/30 rounded-full overflow-hidden shrink-0">
+                        <span className="block h-full bg-primary" style={{ width: `${Math.min(100, Math.max(0, technicalMetrics.rsi))}%` }}></span>
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between border-b border-[#e7e7f3] pb-2">
-                    <span className="text-xs text-[#434655] font-medium">50-Day Moving Avg</span>
-                    <span className="font-mono font-bold text-[#191b23]">₹{technicalMetrics.sma_50.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                  <div className="flex items-center justify-between border-b border-border-subtle/30 pb-2">
+                    <span className="text-xs text-text-muted font-medium">50-Day Moving Avg</span>
+                    <span className="font-mono font-bold text-text-primary">₹{technicalMetrics.sma_50.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
                   </div>
-                  <div className="flex items-center justify-between border-b border-[#e7e7f3] pb-2">
-                    <span className="text-xs text-[#434655] font-medium">200-Day Moving Avg</span>
-                    <span className="font-mono font-bold text-[#191b23]">₹{technicalMetrics.sma_200.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                  <div className="flex items-center justify-between border-b border-border-subtle/30 pb-2">
+                    <span className="text-xs text-text-muted font-medium">200-Day Moving Avg</span>
+                    <span className="font-mono font-bold text-text-primary">₹{technicalMetrics.sma_200.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
                   </div>
-                  <div className="flex items-center justify-between border-b border-[#e7e7f3] pb-2">
-                    <span className="text-xs text-[#434655] font-medium">Volume (Latest)</span>
-                    <span className="font-mono font-bold text-[#191b23]">{technicalMetrics.volume}</span>
+                  <div className="flex items-center justify-between border-b border-border-subtle/30 pb-2">
+                    <span className="text-xs text-text-muted font-medium">Volume (Latest)</span>
+                    <span className="font-mono font-bold text-text-primary">{technicalMetrics.volume}</span>
                   </div>
-                  <div className="flex items-center justify-between border-b border-[#e7e7f3] pb-2">
-                    <span className="text-xs text-[#434655] font-medium">VWAP</span>
-                    <span className="font-mono font-bold text-[#191b23]">₹{technicalMetrics.vwap.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                  <div className="flex items-center justify-between border-b border-border-subtle/30 pb-2">
+                    <span className="text-xs text-text-muted font-medium">VWAP</span>
+                    <span className="font-mono font-bold text-text-primary">₹{technicalMetrics.vwap.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
                   </div>
                 </div>
               </div>
 
               {/* Citations badges */}
               <div>
-                <h3 className="text-[10px] font-bold text-[#737686] tracking-wider uppercase mb-4">
+                <h3 className="text-[10px] font-bold text-text-muted tracking-wider uppercase mb-4">
                   Institutional Citations
                 </h3>
                 <div className="space-y-3">
@@ -371,15 +377,15 @@ export default function InstitutionalResearchPage() {
                       href={`https://www.google.com/search?q=${encodeURIComponent(searchSymbol + " " + cit.title)}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="group p-2.5 border border-[#c3c6d7] rounded bg-white hover:border-[#004ac6] hover:text-[#004ac6] cursor-pointer transition-all flex items-center justify-between block"
+                      className="group p-2.5 border border-border-subtle rounded bg-surface-base hover:border-primary hover:text-primary cursor-pointer transition-all flex items-center justify-between block hover:-translate-y-0.5 hover:shadow-md duration-300"
                     >
                       <div className="overflow-hidden">
-                        <p className="text-xs font-bold text-[#191b23] group-hover:text-[#004ac6] transition-colors truncate">
+                        <p className="text-xs font-bold text-text-primary group-hover:text-primary transition-colors truncate">
                           {cit.title}
                         </p>
-                        <p className="text-[9px] text-[#737686] font-mono mt-0.5 truncate">{cit.meta}</p>
+                        <p className="text-[9px] text-text-muted font-mono mt-0.5 truncate">{cit.meta}</p>
                       </div>
-                      <span className="material-symbols-outlined text-[#737686] group-hover:text-[#004ac6] !text-sm flex-shrink-0">
+                      <span className="material-symbols-outlined text-text-muted group-hover:text-primary !text-sm flex-shrink-0">
                         open_in_new
                       </span>
                     </a>
@@ -388,30 +394,30 @@ export default function InstitutionalResearchPage() {
               </div>
 
               {/* Ownership Breakdown */}
-              <div className="p-4 bg-white border border-[#c3c6d7] rounded-xl shadow-sm">
-                <h4 className="text-[10px] font-bold text-[#191b23] uppercase tracking-wider mb-3">
+              <div className="p-4 bg-surface-base border border-border-subtle rounded-xl shadow-sm hover:-translate-y-0.5 hover:shadow-md transition-all duration-300">
+                <h4 className="text-[10px] font-bold text-text-primary uppercase tracking-wider mb-3">
                   Ownership Structure
                 </h4>
                 <div className="space-y-2">
                   <div className="flex items-center gap-3">
-                    <div className="w-2.5 h-2.5 bg-[#004ac6] rounded-sm"></div>
-                    <span className="text-xs text-[#434655] flex-1">Promoter Group</span>
-                    <span className="text-xs font-mono font-bold text-[#191b23]">{ownership.promoter.toFixed(2)}%</span>
+                    <div className="w-2.5 h-2.5 bg-primary rounded-sm"></div>
+                    <span className="text-xs text-text-muted flex-1">Promoter Group</span>
+                    <span className="text-xs font-mono font-bold text-text-primary">{ownership.promoter.toFixed(2)}%</span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <div className="w-2.5 h-2.5 bg-[#505f76] rounded-sm"></div>
-                    <span className="text-xs text-[#434655] flex-1">FII / FPI</span>
-                    <span className="text-xs font-mono font-bold text-[#191b23]">{ownership.fii.toFixed(2)}%</span>
+                    <div className="w-2.5 h-2.5 bg-secondary rounded-sm"></div>
+                    <span className="text-xs text-text-muted flex-1">FII / FPI</span>
+                    <span className="text-xs font-mono font-bold text-text-primary">{ownership.fii.toFixed(2)}%</span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <div className="w-2.5 h-2.5 bg-[#c3c6d7] rounded-sm"></div>
-                    <span className="text-xs text-[#434655] flex-1">DII / Mutual Funds</span>
-                    <span className="text-xs font-mono font-bold text-[#191b23]">{ownership.dii.toFixed(2)}%</span>
+                    <div className="w-2.5 h-2.5 bg-border-subtle rounded-sm"></div>
+                    <span className="text-xs text-text-muted flex-1">DII / Mutual Funds</span>
+                    <span className="text-xs font-mono font-bold text-text-primary">{ownership.dii.toFixed(2)}%</span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <div className="w-2.5 h-2.5 bg-[#e7e7f3] rounded-sm"></div>
-                    <span className="text-xs text-[#434655] flex-1">Public &amp; Others</span>
-                    <span className="text-xs font-mono font-bold text-[#191b23]">{ownership.public.toFixed(2)}%</span>
+                    <div className="w-2.5 h-2.5 bg-canvas rounded-sm animate-pulse"></div>
+                    <span className="text-xs text-text-muted flex-1">Public &amp; Others</span>
+                    <span className="text-xs font-mono font-bold text-text-primary">{ownership.public.toFixed(2)}%</span>
                   </div>
                 </div>
               </div>

@@ -31,9 +31,15 @@ def analyze_portfolio(payload: PortfolioRequest, request: Request):
     try:
         result = PortfolioService.generate_report(payload.portfolio, db)
         if not result["success"]:
+            err_msg = result["report"]
+            if "Could not parse" in err_msg or "Duplicate" in err_msg or "Negative" in err_msg or "Invalid format" in err_msg or "Zero allocation" in err_msg or "allocation weight" in err_msg:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=err_msg.replace("An error occurred while compiling the report: ", "")
+                )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=result["report"]
+                detail=err_msg
             )
         return result
     except HTTPException:
@@ -43,3 +49,4 @@ def analyze_portfolio(payload: PortfolioRequest, request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred during analysis: {str(e)}"
         )
+

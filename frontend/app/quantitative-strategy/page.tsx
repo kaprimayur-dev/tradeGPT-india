@@ -35,8 +35,14 @@ export default function QuantitativeStrategyPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     handleRunBacktest();
+    
+    const handleRefresh = () => {
+      handleRunBacktest();
+    };
+    window.addEventListener("refreshData", handleRefresh);
+    return () => window.removeEventListener("refreshData", handleRefresh);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [ticker, strategy, period, initialCapital]);
 
   // Generate SVG path for chart data
   let strategyPath = "";
@@ -130,63 +136,62 @@ export default function QuantitativeStrategyPage() {
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden h-[calc(100vh-3.5rem)] font-body">
+    <div className="flex-1 flex flex-col overflow-hidden h-full font-body bg-canvas">
       
       {/* Config Rail (Internal Header) */}
-      <div className="h-14 bg-white border-b border-[#c3c6d7] flex items-center px-6 gap-4 z-10 shrink-0">
-        <div className="flex items-center bg-[#f3f3fe] px-3 py-1.5 rounded-lg border border-[#c3c6d7]">
-          <span className="text-[10px] font-bold text-[#737686] mr-2">STRATEGY</span>
+      <div className="h-14 bg-surface-base border-b border-border-subtle flex items-center px-6 gap-4 z-10 shrink-0">
+        <div className="flex items-center bg-canvas px-3 py-1.5 rounded-lg border border-border-subtle">
+          <span className="text-[10px] font-bold text-text-muted mr-2">STRATEGY</span>
           <select 
             value={strategy}
             onChange={(e) => setStrategy(e.target.value)}
-            className="bg-transparent border-none p-0 text-xs font-bold text-[#004ac6] focus:ring-0 cursor-pointer outline-none"
+            className="bg-transparent border-none p-0 text-xs font-bold text-primary focus:ring-0 cursor-pointer outline-none"
           >
             <option value="SMA Crossover">SMA Crossover</option>
-            <option value="RSI">RSI Strategy</option>
-            <option value="Buy & Hold">Buy & Hold</option>
+            <option value="Mean Reversion">Mean Reversion</option>
+            <option value="MACD Breakout">MACD Breakout</option>
           </select>
         </div>
 
-        <div className="flex items-center bg-[#f3f3fe] px-3 py-1.5 rounded-lg border border-[#c3c6d7]">
-          <span className="text-[10px] font-bold text-[#737686] mr-2">TICKER</span>
+        <div className="flex items-center bg-canvas px-3 py-1.5 rounded-lg border border-border-subtle">
+          <span className="text-[10px] font-bold text-text-muted mr-2">TICKER</span>
           <input
             type="text"
             value={ticker}
-            onChange={(e) => setTicker(e.target.value)}
-            className="bg-transparent border-none p-0 text-xs font-bold text-[#191b23] focus:ring-0 outline-none uppercase w-20 font-mono font-bold"
-            placeholder="TCS"
+            onChange={(e) => setTicker(e.target.value.toUpperCase())}
+            className="bg-transparent border-none p-0 text-xs font-mono font-bold text-text-primary focus:ring-0 outline-none w-14 uppercase"
+            placeholder="INFY"
           />
         </div>
 
-        <div className="flex items-center bg-[#f3f3fe] px-3 py-1.5 rounded-lg border border-[#c3c6d7]">
-          <span className="text-[10px] font-bold text-[#737686] mr-2">PERIOD</span>
+        <div className="flex items-center bg-canvas px-3 py-1.5 rounded-lg border border-border-subtle">
+          <span className="text-[10px] font-bold text-text-muted mr-2">PERIOD</span>
           <select 
             value={period}
             onChange={(e) => setPeriod(e.target.value)}
-            className="bg-transparent border-none p-0 text-xs font-bold text-[#191b23] focus:ring-0 cursor-pointer outline-none font-mono font-bold"
+            className="bg-transparent border-none p-0 text-xs font-bold text-text-primary focus:ring-0 cursor-pointer outline-none font-mono"
           >
-            <option value="1y">1Y</option>
-            <option value="2y">2Y</option>
-            <option value="5y">5Y</option>
-            <option value="max">MAX</option>
+            <option value="1y">1 Year</option>
+            <option value="2y">2 Years</option>
+            <option value="5y">5 Years (Default)</option>
           </select>
         </div>
 
-        <div className="flex items-center bg-[#f3f3fe] px-3 py-1.5 rounded-lg border border-[#c3c6d7]">
-          <span className="text-[10px] font-bold text-[#737686] mr-2">CAPITAL</span>
+        <div className="flex items-center bg-canvas px-3 py-1.5 rounded-lg border border-border-subtle">
+          <span className="text-[10px] font-bold text-text-muted mr-2">CAPITAL</span>
           <input 
             type="number"
             value={initialCapital}
             onChange={(e) => setInitialCapital(parseFloat(e.target.value) || 100000)}
-            className="bg-transparent border-none p-0 text-xs font-bold text-[#191b23] focus:ring-0 outline-none w-24 font-mono font-bold"
+            className="bg-transparent border-none p-0 text-xs font-bold text-text-primary focus:ring-0 outline-none w-24 font-mono"
           />
         </div>
 
-        <div className="h-6 w-px bg-[#c3c6d7] mx-1"></div>
+        <div className="h-6 w-px bg-border-subtle mx-1"></div>
 
         <button 
           onClick={handleShowInputs}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-[#434655] hover:text-[#191b23] hover:bg-[#f3f3fe] transition-colors rounded-lg text-xs font-semibold"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-text-muted hover:text-text-primary hover:bg-canvas transition-colors rounded-lg text-xs font-semibold"
         >
           <span className="material-symbols-outlined !text-[1.1rem]">tune</span>
           <span>Inputs</span>
@@ -196,7 +201,7 @@ export default function QuantitativeStrategyPage() {
           <button
             onClick={handleRunBacktest}
             disabled={isRunning}
-            className="bg-[#004ac6] text-white px-5 py-1.5 rounded-lg text-xs font-semibold hover:bg-[#003ea8] transition-colors active:scale-95 duration-100 disabled:opacity-50"
+            className="bg-primary text-white px-5 py-1.5 rounded-lg text-xs font-semibold hover:bg-primary-fixed-dim transition-colors active-press disabled:opacity-50 cursor-pointer"
           >
             {isRunning ? "Running Simulation..." : "Run Backtest"}
           </button>

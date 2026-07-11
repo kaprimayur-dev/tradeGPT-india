@@ -1,6 +1,8 @@
 import os
 import sys
 import logging
+import threading
+import time
 from dotenv import load_dotenv
 
 # Ensure the backend directory is in the python path for importing modules properly
@@ -200,6 +202,15 @@ def format_market_cap(mcap: float) -> str:
         return f"₹{mcap/1e5:,.2f} L"
     return f"₹{mcap:,.2f}"
 
+# Programmatic caches to prevent duplicate expensive LLM calls
+_research_cache = {}
+_research_cache_lock = threading.Lock()
+RESEARCH_CACHE_DURATION_SECS = 300 # 5 minutes cache
+
+_stock_report_cache = {}
+_stock_report_cache_lock = threading.Lock()
+STOCK_REPORT_CACHE_DURATION_SECS = 300 # 5 minutes cache
+
 def generate_structured_research(company_name: str, db: Chroma, logger: logging.Logger) -> dict:
     """Fetches stock data, parses indicators, and calls Gemini for structured json summary."""
     import yfinance as yf
@@ -208,6 +219,19 @@ def generate_structured_research(company_name: str, db: Chroma, logger: logging.
     import json
     import datetime
     
+    global _research_cache
+    company_key = company_name.lower().strip()
+    
+    current_time = time.time()
+    with _research_cache_lock:
+        if company_key in _research_cache:
+            cache_data, cache_time = _research_cache[company_key]
+            if (current_time - cache_time) < RESEARCH_CACHE_DURATION_SECS:
+                logger.info(f"Serving structured research for '{company_name}' from cache")
+                cache_data_copy = dict(cache_data)
+                cache_data_copy["timestamp"] = datetime.datetime.now().isoformat()
+                return cache_data_copy
+                
     logger.info(f"Structured Research: retrieving RAG chunks for '{company_name}'")
     retrieval_query = f"financial performance, SWOT analysis, growth drivers, risks, margins, business outlook, and balance sheet details for {company_name}"
     retrieved_results = retrieve_relevant_chunks(retrieval_query, db, k=10, logger=logger)
@@ -254,6 +278,9 @@ def generate_structured_research(company_name: str, db: Chroma, logger: logging.
             if not hist_1d.empty:
                 price = float(hist_1d["Close"].iloc[-1])
                 
+        if price == 0.0:
+            raise ValueError(f"Could not retrieve market data or price for stock symbol '{company_name}'. Please ensure the ticker or company name is correct and listed on NSE.")
+            
         prev_close = info.get("previousClose")
         if not prev_close:
             hist_2d = ticker_obj.history(period="5d")
@@ -272,6 +299,8 @@ def generate_structured_research(company_name: str, db: Chroma, logger: logging.
         pe_ratio = info.get("trailingPE") or info.get("forwardPE") or 0.0
         beta = info.get("beta") or 1.0
     except Exception as e:
+        if isinstance(e, ValueError) and "Could not retrieve market data" in str(e):
+            raise
         logger.error(f"Error fetching market data for {ticker_symbol}: {str(e)}", exc_info=True)
         
     rsi_val = 50.0
@@ -392,6 +421,9 @@ def generate_structured_research(company_name: str, db: Chroma, logger: logging.
         "timestamp": datetime.datetime.now().isoformat()
     }
     
+    with _research_cache_lock:
+        _research_cache[company_key] = (result, time.time())
+        
     return result
 
 
@@ -406,6 +438,17 @@ def generate_stock_report_data(company_name: str, db: Chroma, logger: logging.Lo
     Returns:
         dict: A dictionary containing 'report' (str) and 'sources' (List[Dict]).
     """
+    global _stock_report_cache
+    company_key = company_name.lower().strip()
+    
+    current_time = time.time()
+    with _stock_report_cache_lock:
+        if company_key in _stock_report_cache:
+            cache_data, cache_time = _stock_report_cache[company_key]
+            if (current_time - cache_time) < STOCK_REPORT_CACHE_DURATION_SECS:
+                logger.info(f"Serving stock analysis report for '{company_name}' from cache")
+                return cache_data
+                
     logger.info(f"Generating Stock Analysis Report Data for: '{company_name}'")
     
     # Formulate a query targeting financial performance, risks, and drivers
@@ -437,10 +480,14 @@ def generate_stock_report_data(company_name: str, db: Chroma, logger: logging.Lo
     # Extract sources
     sources = extract_sources(retrieved_results)
     
-    return {
+    result = {
         "report": response.text.strip(),
         "sources": sources
     }
+    with _stock_report_cache_lock:
+        _stock_report_cache[company_key] = (result, time.time())
+        
+    return result
 
 
 def generate_stock_report(company_name: str, db: Chroma, logger: logging.Logger):

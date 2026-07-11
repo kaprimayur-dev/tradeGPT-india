@@ -42,6 +42,7 @@ async function fetchWithRetry(url: string, options: RequestInit = {}, retries = 
 export interface IndexTicker {
   price: number;
   change: number;
+  sparkline?: number[];
 }
 
 export interface SectorItem {
@@ -58,13 +59,24 @@ export interface NewsArticle {
   summary: string;
 }
 
+export interface CandleItem {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
 export interface MarketDataResponse {
   success: boolean;
   indices: Record<string, IndexTicker>;
-  breadth: { advancing: number; declining: number };
+  breadth: { advancing: number; declining: number; unchanged?: number };
   sectors: SectorItem[];
   news: NewsArticle[];
   timestamp: string;
+  history?: Record<string, CandleItem[]>;
+  watchlist?: Record<string, IndexTicker>;
 }
 
 export interface PortfolioResponse {
@@ -165,11 +177,13 @@ export interface BacktestResponse {
 }
 
 export const api = {
-  /**
-   * GET /market-data
-   */
-  async getMarketData(): Promise<MarketDataResponse> {
-    return fetchWithRetry(`${API_BASE_URL}/market-data`, { method: "GET" }) as Promise<MarketDataResponse>;
+  async getMarketData(interval?: string, period?: string, watchlist?: string[]): Promise<MarketDataResponse> {
+    const query = new URLSearchParams();
+    if (interval) query.append("interval", interval);
+    if (period) query.append("period", period);
+    if (watchlist && watchlist.length > 0) query.append("watchlist", watchlist.join(","));
+    const url = `${API_BASE_URL}/market-data` + (query.toString() ? `?${query.toString()}` : "");
+    return fetchWithRetry(url, { method: "GET" }) as Promise<MarketDataResponse>;
   },
 
   /**

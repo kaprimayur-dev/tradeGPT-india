@@ -1,21 +1,21 @@
 @import "tailwindcss";
 
 @theme {
-  --color-canvas: #faf8ff;
-  --color-surface-base: #ffffff;
-  --color-surface-elevation: #ededf9;
-  --color-border-subtle: #c3c6d7;
-  --color-primary: #004ac6;
-  --color-primary-fixed-dim: #003ea8;
-  --color-secondary: #505f76;
-  --color-secondary-container: #d0e1fb;
-  --color-on-secondary-container: #0b1c30;
-  --color-text-primary: #191b23;
-  --color-text-muted: #434655;
-  --color-alert-amber: #bc4800;
-  --color-alert-red: #ba1a1a;
-  --color-zebra-a: #ffffff;
-  --color-zebra-b: #f8fafc;
+  --color-canvas: var(--theme-canvas);
+  --color-surface-base: var(--theme-surface-base);
+  --color-surface-elevation: var(--theme-surface-elevation);
+  --color-border-subtle: var(--theme-border-subtle);
+  --color-primary: var(--theme-primary);
+  --color-primary-fixed-dim: var(--theme-primary-fixed-dim);
+  --color-secondary: var(--theme-secondary);
+  --color-secondary-container: var(--theme-secondary-container);
+  --color-on-secondary-container: var(--theme-on-secondary-container);
+  --color-text-primary: var(--theme-text-primary);
+  --color-text-muted: var(--theme-text-muted);
+  --color-alert-amber: var(--theme-alert-amber);
+  --color-alert-red: var(--theme-alert-red);
+  --color-zebra-a: var(--theme-zebra-a);
+  --color-zebra-b: var(--theme-zebra-b);
   
   --font-display: var(--font-hanken-grotesk), sans-serif;
   --font-body: var(--font-inter), sans-serif;
@@ -27,10 +27,47 @@
   --radius-xl: 0.75rem;
 }
 
+:root {
+  --theme-canvas: #faf8ff;
+  --theme-surface-base: #ffffff;
+  --theme-surface-elevation: #ededf9;
+  --theme-border-subtle: #c3c6d7;
+  --theme-primary: #004ac6;
+  --theme-primary-fixed-dim: #003ea8;
+  --theme-secondary: #505f76;
+  --theme-secondary-container: #d0e1fb;
+  --theme-on-secondary-container: #0b1c30;
+  --theme-text-primary: #191b23;
+  --theme-text-muted: #434655;
+  --theme-alert-amber: #bc4800;
+  --theme-alert-red: #ba1a1a;
+  --theme-zebra-a: #ffffff;
+  --theme-zebra-b: #f8fafc;
+}
+
+html.dark {
+  --theme-canvas: #0b0c10;
+  --theme-surface-base: #13151c;
+  --theme-surface-elevation: #1c1e28;
+  --theme-border-subtle: #242735;
+  --theme-primary: #2b70f3;
+  --theme-primary-fixed-dim: #1f50c0;
+  --theme-secondary: #8a92a6;
+  --theme-secondary-container: #1e2634;
+  --theme-on-secondary-container: #d0e1fb;
+  --theme-text-primary: #f1f3f9;
+  --theme-text-muted: #9ba0b0;
+  --theme-alert-amber: #ff9100;
+  --theme-alert-red: #ff3b30;
+  --theme-zebra-a: #13151c;
+  --theme-zebra-b: #191c28;
+}
+
 body {
-  background-color: #faf8ff;
-  color: #191b23;
+  background-color: var(--theme-canvas);
+  color: var(--theme-text-primary);
   font-family: var(--font-inter), sans-serif;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 /* Custom scrollbar for high-density financial data */
@@ -42,17 +79,47 @@ body {
   background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #c3c6d7;
+  background: var(--theme-border-subtle);
   border-radius: 2px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #737686;
+  background: var(--theme-text-muted);
 }
 
 /* TradingView-inspired watermark background grid */
 .trading-view-grid {
-  background-image: radial-gradient(#e1e2ed 1px, transparent 1px);
+  background-image: radial-gradient(var(--theme-border-subtle) 1px, transparent 1px);
   background-size: 24px 24px;
+}
+
+/* Infinite marquee keyframe animation */
+@keyframes marquee {
+  0% { transform: translate3d(0, 0, 0); }
+  100% { transform: translate3d(-50%, 0, 0); }
+}
+
+.animate-marquee {
+  display: inline-flex;
+  white-space: nowrap;
+  animation: marquee 35s linear infinite;
+}
+
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
+
+/* Glassmorphism panel styling */
+.glass-panel {
+  background: rgba(var(--theme-surface-base), 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(var(--theme-border-subtle), 0.2);
+}
+
+/* Spring-like micro-interactions */
+.active-press:active {
+  transform: scale(0.97);
+  transition: transform 0.1s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
 /* Print optimizations for intelligence reports */

@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { api, MarketDataResponse } from "../api";
+import { createChart, CandlestickSeries, HistogramSeries, CrosshairMode, IChartApi, ISeriesApi, LineStyle } from "lightweight-charts";
+import type { CandlestickData, HistogramData, Time, MouseEventParams } from "lightweight-charts";
 
 export default function MarketIntelligencePage() {
   const [selectedInterval, setSelectedInterval] = useState("15M");
@@ -23,32 +25,60 @@ export default function MarketIntelligencePage() {
   const [marketData, setMarketData] = useState<MarketDataResponse | null>(null);
   const [usdinrPrice, setUsdinrPrice] = useState(83.50);
   const [usdinrChange, setUsdinrChange] = useState(-0.02);
+  const [hoveredCandle, setHoveredCandle] = useState<{
+    time: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume?: number;
+    change: number;
+  } | null>(null);
+  const [countdownStr, setCountdownStr] = useState("");
+  const [latency, setLatency] = useState<number>(14);
 
-  const mockCandles = [
-    { type: "green", height: "45%", wickTop: "15%", wickBottom: "80%" },
-    { type: "green", height: "60%", wickTop: "10%", wickBottom: "90%" },
-    { type: "red", height: "50%", wickTop: "20%", wickBottom: "75%" },
-    { type: "green", height: "70%", wickTop: "5%", wickBottom: "95%" },
-    { type: "red", height: "40%", wickTop: "30%", wickBottom: "60%" },
-    { type: "red", height: "35%", wickTop: "25%", wickBottom: "55%" },
-    { type: "green", height: "55%", wickTop: "15%", wickBottom: "80%" },
-    { type: "green", height: "65%", wickTop: "10%", wickBottom: "85%" },
-    { type: "red", height: "45%", wickTop: "20%", wickBottom: "70%" },
-    { type: "green", height: "75%", wickTop: "5%", wickBottom: "95%" },
-    { type: "green", height: "80%", wickTop: "0%", wickBottom: "100%" },
-    { type: "red", height: "60%", wickTop: "10%", wickBottom: "85%" },
-    { type: "red", height: "55%", wickTop: "15%", wickBottom: "75%" },
-    { type: "green", height: "70%", wickTop: "5%", wickBottom: "90%" },
-    { type: "green", height: "85%", wickTop: "0%", wickBottom: "95%" },
-  ];
+  const [openPositionsCount, setOpenPositionsCount] = useState(3);
+  const [portfolioHealth, setPortfolioHealth] = useState(84);
+  const [isMounted, setIsMounted] = useState(false);
 
-  const [candles, setCandles] = useState(mockCandles);
+  useEffect(() => {
+    setIsMounted(true);
+    if (typeof window !== "undefined") {
+      const savedWatchlist = localStorage.getItem("trade_watchlist");
+      if (savedWatchlist) {
+        try {
+          setOpenPositionsCount(JSON.parse(savedWatchlist).length);
+        } catch (e) {
+          console.error("Failed to parse watchlist", e);
+        }
+      }
+      const savedHealth = localStorage.getItem("trade_portfolio_health");
+      if (savedHealth) {
+        setPortfolioHealth(parseInt(savedHealth, 10));
+      }
+    }
+  }, []);
 
-  const loadData = async () => {
-    setLoading(true);
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+
+  const timeframeMapping: Record<string, { interval: string; period: string }> = {
+    "1M": { interval: "1m", period: "1d" },
+    "5M": { interval: "5m", period: "5d" },
+    "15M": { interval: "15m", period: "5d" },
+    "1H": { interval: "1h", period: "30d" },
+    "1D": { interval: "1d", period: "30d" },
+  };
+
+  const loadData = async (timeframe: string = selectedInterval, silent: boolean = false) => {
+    if (!silent) setLoading(true);
     setError(null);
+    const startTime = Date.now();
     try {
-      const data = await api.getMarketData();
+      const mapping = timeframeMapping[timeframe] || { interval: "1d", period: "30d" };
+      const data = await api.getMarketData(mapping.interval, mapping.period);
       setMarketData(data);
       if (data.indices) {
         if (data.indices["NIFTY"]) {
@@ -64,18 +94,32 @@ export default function MarketIntelligencePage() {
           setUsdinrChange(data.indices["USDINR"].change);
         }
       }
+      setLatency(Date.now() - startTime);
     } catch (err: unknown) {
       const e = err as Error;
-      setError(e.message || "Failed to load live market data");
+      if (!silent) setError(e.message || "Failed to load live market data");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadData();
-  }, []);
+    loadData(selectedInterval, false);
+
+    const handleRefresh = () => {
+      loadData(selectedInterval, false);
+    };
+    window.addEventListener("refreshData", handleRefresh);
+    return () => window.removeEventListener("refreshData", handleRefresh);
+  }, [selectedInterval]);
+
+  // Silent background refresh every 60s
+  useEffect(() => {
+    const pollInterval = setInterval(() => {
+      loadData(selectedInterval, true);
+    }, 60000);
+    return () => clearInterval(pollInterval);
+  }, [selectedInterval]);
 
   // Simulate real-time price tick changes once price is loaded
   useEffect(() => {
@@ -92,41 +136,339 @@ export default function MarketIntelligencePage() {
     return () => clearInterval(interval);
   }, [loading, error]);
 
-  const handleTimeframeChange = (tf: string) => {
+  // Update last candle in lightweight-charts when simulated ticks happen
+  useEffect(() => {
+    if (!candleSeriesRef.current) return;
+    const rawCandles = marketData?.history?.[selectedIndex] || [];
+    const lastCandle = rawCandles[rawCandles.length - 1];
+    if (!lastCandle) return;
+    
+    const currentPrice = selectedIndex === "NIFTY" ? niftyPrice : sensexPrice;
+    const dtStr = lastCandle.date.includes(" ") ? lastCandle.date.replace(" ", "T") : lastCandle.date;
+    const ts = Math.floor(Date.parse(dtStr) / 1000);
+    const timeVal = (isNaN(ts) ? lastCandle.date : ts) as Time;
+
+    try {
+      candleSeriesRef.current.update({
+        time: timeVal,
+        open: lastCandle.open,
+        high: Math.max(lastCandle.high, currentPrice),
+        low: Math.min(lastCandle.low, currentPrice),
+        close: currentPrice,
+      });
+    } catch (e) {
+      // ignore scale mismatch during switches
+    }
+  }, [niftyPrice, sensexPrice, selectedIndex, marketData]);
+
+  // Dynamic ticking countdown for market opens/closes in IST
+  useEffect(() => {
+    const updateCountdown = () => {
+      const now = new Date();
+      const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+      const istOffset = 5.5 * 3600000;
+      const istTime = new Date(utc + istOffset);
+      
+      const day = istTime.getDay();
+      const hours = istTime.getHours();
+      const minutes = istTime.getMinutes();
+      
+      const isWeekend = day === 0 || day === 6;
+      let targetTime = new Date(istTime);
+      let isToClose = false;
+      
+      if (isWeekend) {
+        const daysToAdd = day === 0 ? 1 : 2;
+        targetTime.setDate(targetTime.getDate() + daysToAdd);
+        targetTime.setHours(9, 15, 0, 0);
+      } else {
+        const timeValue = hours * 100 + minutes;
+        if (timeValue < 915) {
+          targetTime.setHours(9, 15, 0, 0);
+        } else if (timeValue < 1530) {
+          targetTime.setHours(15, 30, 0, 0);
+          isToClose = true;
+        } else {
+          const daysToAdd = day === 5 ? 3 : 1;
+          targetTime.setDate(targetTime.getDate() + daysToAdd);
+          targetTime.setHours(9, 15, 0, 0);
+        }
+      }
+      
+      const diffMs = targetTime.getTime() - istTime.getTime();
+      if (diffMs <= 0) {
+        setCountdownStr("00:00:00");
+        return;
+      }
+      
+      const totalSecs = Math.floor(diffMs / 1000);
+      const h = Math.floor(totalSecs / 3600);
+      const m = Math.floor((totalSecs % 3600) / 60);
+      const s = totalSecs % 60;
+      
+      const hStr = h.toString().padStart(2, "0");
+      const mStr = m.toString().padStart(2, "0");
+      const sStr = s.toString().padStart(2, "0");
+      
+      setCountdownStr(`${isToClose ? "Closes" : "Opens"} in ${hStr}:${mStr}:${sStr}`);
+    };
+    
+    updateCountdown();
+    const timer = setInterval(updateCountdown, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const handleTimeframeChange = async (tf: string) => {
     setSelectedInterval(tf);
-    // Randomize wicks/heights slightly to visually reflect chart update
-    const updated = candles.map((c) => {
-      const heightVal = parseInt(c.height, 10);
-      const diff = Math.floor(Math.random() * 16) - 8;
-      const newHeight = Math.min(90, Math.max(20, heightVal + diff)) + "%";
-      const newType = Math.random() > 0.45 ? "green" : "red";
-      return {
-        ...c,
-        height: newHeight,
-        type: newType,
-      };
-    });
-    setCandles(updated);
+    await loadData(tf, false);
   };
 
   const timeframes = ["1M", "5M", "15M", "1H", "1D"];
 
+  useEffect(() => {
+    if (!chartContainerRef.current) return;
+
+    const container = chartContainerRef.current;
+    
+    // Create chart
+    const chart = createChart(container, {
+      layout: {
+        background: { color: '#ffffff' },
+        textColor: '#191b23',
+        fontSize: 10,
+        fontFamily: 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      },
+      grid: {
+        vertLines: { color: '#f3f3fe' },
+        horzLines: { color: '#f3f3fe' },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: {
+          color: '#004ac6',
+          width: 1,
+          style: LineStyle.Dashed,
+          labelBackgroundColor: '#004ac6',
+        },
+        horzLine: {
+          color: '#004ac6',
+          width: 1,
+          style: LineStyle.Dashed,
+          labelBackgroundColor: '#004ac6',
+        },
+      },
+      rightPriceScale: {
+        borderColor: '#c3c6d7',
+        visible: true,
+      },
+      timeScale: {
+        borderColor: '#c3c6d7',
+        timeVisible: true,
+        secondsVisible: false,
+        rightOffset: 3,
+        barSpacing: 12,
+        minBarSpacing: 4,
+        fixLeftEdge: true,
+        fixRightEdge: true,
+      },
+    });
+
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: '#10b981',
+      downColor: '#ba1a1a',
+      borderUpColor: '#10b981',
+      borderDownColor: '#ba1a1a',
+      wickUpColor: '#10b981',
+      wickDownColor: '#ba1a1a',
+    });
+
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      color: '#004ac6',
+      priceFormat: {
+        type: 'volume',
+      },
+      priceScaleId: '', // overlay
+    });
+
+    volumeSeries.priceScale().applyOptions({
+      scaleMargins: {
+        top: 0.8,
+        bottom: 0,
+      },
+    });
+
+    chartRef.current = chart;
+    candleSeriesRef.current = candleSeries;
+    volumeSeriesRef.current = volumeSeries;
+
+    // Load data
+    const rawCandles = marketData?.history?.[selectedIndex] || [];
+    const parsedData = rawCandles.map((c) => {
+      const dtStr = c.date.includes(" ") ? c.date.replace(" ", "T") : c.date;
+      const ts = Math.floor(Date.parse(dtStr) / 1000);
+      return {
+        time: (isNaN(ts) ? c.date : ts) as Time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume,
+        rawDate: c.date,
+      };
+    });
+
+    // filter out duplicates/decreasing timestamps
+    const uniqueCandles: typeof parsedData = [];
+    let lastTimeNum = 0;
+    for (const item of parsedData) {
+      const tNum = typeof item.time === 'number' ? item.time : Date.parse(item.time as string) / 1000;
+      if (!isNaN(tNum) && tNum > lastTimeNum) {
+        uniqueCandles.push(item);
+        lastTimeNum = tNum;
+      }
+    }
+
+    if (uniqueCandles.length > 0) {
+      candleSeries.setData(uniqueCandles.map(c => ({
+        time: c.time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      })));
+
+      volumeSeries.setData(uniqueCandles.map(c => ({
+        time: c.time,
+        value: c.volume,
+        color: c.close >= c.open ? 'rgba(16, 185, 129, 0.4)' : 'rgba(186, 26, 26, 0.4)',
+      })));
+
+      // Auto-fit content and adjust zoom to look professional immediately
+      chart.timeScale().fitContent();
+    }
+
+    // Subscribe to crosshair move
+    chart.subscribeCrosshairMove((param: MouseEventParams) => {
+      if (
+        !param.point ||
+        !param.time ||
+        param.point.x < 0 ||
+        param.point.x > container.clientWidth ||
+        param.point.y < 0 ||
+        param.point.y > container.clientHeight
+      ) {
+        setHoveredCandle(null);
+      } else {
+        const candleData = param.seriesData.get(candleSeries) as CandlestickData;
+        const volumeData = param.seriesData.get(volumeSeries) as any;
+        if (candleData) {
+          // Find matching original date
+          const matched = uniqueCandles.find(c => {
+            if (typeof c.time === 'number' && typeof param.time === 'number') {
+              return c.time === param.time;
+            }
+            return String(c.time) === String(param.time);
+          });
+          const rawDate = matched ? matched.rawDate : String(param.time);
+          const chg = candleData.open ? ((candleData.close - candleData.open) / candleData.open) * 100 : 0;
+          setHoveredCandle({
+            time: rawDate,
+            open: candleData.open,
+            high: candleData.high,
+            low: candleData.low,
+            close: candleData.close,
+            volume: volumeData ? volumeData.value : undefined,
+            change: chg,
+          });
+        }
+      }
+    });
+
+    // Resize handler
+    const handleResize = () => {
+      chart.resize(container.clientWidth, container.clientHeight);
+    };
+    const resizeObserver = new ResizeObserver(handleResize);
+    resizeObserver.observe(container);
+
+    return () => {
+      resizeObserver.disconnect();
+      if (chartRef.current) {
+        try {
+          chart.remove();
+        } catch (e) {
+          console.warn("Chart remove warning:", e);
+        }
+      }
+      chartRef.current = null;
+      candleSeriesRef.current = null;
+      volumeSeriesRef.current = null;
+    };
+  }, [marketData, selectedIndex]);
+
+  const rawCandles = marketData?.history?.[selectedIndex] || [];
+  const lastCandle = rawCandles[rawCandles.length - 1];
+
+  const lastVolume = lastCandle && lastCandle.volume ? (lastCandle.volume / 1000000).toFixed(2) + "M" : "—";
+
+  const getMarketStatus = () => {
+    const now = new Date();
+    const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+    const istOffset = 5.5 * 3600000;
+    const istTime = new Date(utc + istOffset);
+    
+    const day = istTime.getDay();
+    const hours = istTime.getHours();
+    const minutes = istTime.getMinutes();
+    const timeValue = hours * 100 + minutes;
+    
+    const isWeekend = day === 0 || day === 6;
+    const isMarketHours = timeValue >= 915 && timeValue <= 1530;
+    
+    if (isWeekend) {
+      return { open: false, label: "Market Closed (Weekend)" };
+    } else if (!isMarketHours) {
+      return { open: false, label: "Market Closed (Opens 9:15 AM IST)" };
+    }
+    return { open: true, label: "Market Live" };
+  };
+
+  const formatRelativeTime = (dateStr: string) => {
+    if (!dateStr || dateStr === "N/A") return "—";
+    try {
+      const date = new Date(dateStr.replace(" ", "T"));
+      if (isNaN(date.getTime())) return dateStr;
+      
+      const now = new Date();
+      const diffMs = now.getTime() - date.getTime();
+      const diffSecs = Math.floor(diffMs / 1000);
+      const diffMins = Math.floor(diffSecs / 60);
+      const diffHours = Math.floor(diffMins / 60);
+      
+      if (diffSecs < 60) {
+        return "Just now";
+      } else if (diffMins < 60) {
+        return `${diffMins}m ago`;
+      } else if (diffHours < 24) {
+        return `${diffHours}h ago`;
+      } else if (diffHours < 48) {
+        return "Yesterday";
+      } else {
+        return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      }
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const marketStatus = getMarketStatus();
+
   const currentIndexPrice = selectedIndex === "NIFTY" ? niftyPrice : sensexPrice;
   const currentIndexChange = selectedIndex === "NIFTY" ? priceChange : sensexChange;
 
-  const tickStep = selectedIndex === "NIFTY" ? 50 : 150;
-  const tickValues = [
-    currentIndexPrice + tickStep * 2,
-    currentIndexPrice + tickStep,
-    currentIndexPrice,
-    currentIndexPrice - tickStep,
-    currentIndexPrice - tickStep * 2,
-    currentIndexPrice - tickStep * 3,
-  ];
-
   if (loading) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-[#faf8ff] h-[calc(100vh-3.5rem)] font-body">
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#faf8ff] h-full font-body">
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 border-4 border-[#004ac6] border-t-transparent rounded-full animate-spin"></div>
           <p className="text-xs font-semibold text-[#434655] uppercase tracking-wider animate-pulse">Loading Live Market Terminal...</p>
@@ -137,13 +479,13 @@ export default function MarketIntelligencePage() {
 
   if (error) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-[#faf8ff] h-[calc(100vh-3.5rem)] font-body px-6">
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#faf8ff] h-full px-6">
         <div className="bg-white border border-[#ba1a1a] rounded-xl p-6 max-w-md w-full shadow-md text-center">
           <span className="material-symbols-outlined text-[#ba1a1a] !text-4xl mb-3">error_outline</span>
           <h3 className="font-display font-bold text-base text-[#191b23] mb-1">Terminal Connection Error</h3>
           <p className="text-xs text-[#737686] mb-4 leading-normal">{error}</p>
           <button
-            onClick={loadData}
+            onClick={() => loadData(selectedInterval, false)}
             className="px-4 py-2 bg-[#004ac6] hover:bg-[#003ea8] text-white text-xs font-semibold rounded-lg transition-colors active:scale-95 duration-100"
           >
             Retry Connection
@@ -154,12 +496,12 @@ export default function MarketIntelligencePage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden h-[calc(100vh-3.5rem)] font-body">
+    <div className="flex-1 flex flex-col overflow-hidden h-full font-body">
       {/* Dynamic Workspace Container */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-hidden">
         
         {/* Center Stage: Charting Area */}
-        <section className="flex-1 flex flex-col border-r border-[#c3c6d7] bg-white">
+        <section className="flex-1 flex flex-col border-r border-[#c3c6d7] bg-white min-h-0">
           
           {/* Chart Toolbar */}
           <div className="h-10 border-b border-[#c3c6d7] flex items-center px-4 justify-between bg-[#faf8ff]">
@@ -199,6 +541,16 @@ export default function MarketIntelligencePage() {
                   </div>
                 )}
               </div>
+
+              {/* Live Ticking Index Price */}
+              <div className="flex items-baseline gap-2 border-r border-[#c3c6d7] pr-4">
+                <span className="font-mono text-sm font-bold text-[#191b23]">
+                  {currentIndexPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>
+                <span className={`font-mono text-[11px] font-bold ${currentIndexChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
+                  {currentIndexChange >= 0 ? "+" : ""}{currentIndexChange.toFixed(2)}%
+                </span>
+              </div>
               
               <div className="flex items-center gap-3 text-[11px] font-bold text-[#434655]">
                 {timeframes.map((tf) => (
@@ -232,8 +584,8 @@ export default function MarketIntelligencePage() {
             </div>
             
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-[#737686] tracking-wider uppercase font-mono">
-                VOL: 23.4M
+              <span className="text-[10px] font-medium text-[#737686]/60 tracking-wider uppercase font-mono">
+                VOL: {lastVolume}
               </span>
               <span
                 onClick={() => setIsIndexDropdownOpen(!isIndexDropdownOpen)}
@@ -261,76 +613,58 @@ export default function MarketIntelligencePage() {
           </div>
 
           {/* Chart Content Area */}
-          <div className="flex-1 relative trading-view-grid overflow-hidden flex items-end">
+          <div className="flex-1 relative overflow-hidden flex flex-col min-h-0">
+            {/* Chart Container for Lightweight Charts */}
+            <div ref={chartContainerRef} className="w-full h-full flex-1 relative min-h-0" />
             
-            {/* Candlestick Visualization */}
-            <div className="absolute inset-0 px-6 pt-16 pb-28 flex items-end justify-between select-none">
-              {candles.map((candle, idx) => (
-                <div key={idx} className="flex-1 h-full flex flex-col justify-end items-center relative">
-                  {/* Wick */}
-                  <div
-                    className={`absolute w-px ${
-                      candle.type === "green" ? "bg-[#10b981]" : "bg-[#ba1a1a]"
-                    }`}
-                    style={{ top: candle.wickTop, bottom: `calc(100% - ${candle.wickBottom})` }}
-                  ></div>
-                  {/* Body */}
-                  <div
-                    className={`w-2.5 sm:w-4 rounded-sm z-10 ${
-                      candle.type === "green"
-                        ? "bg-[#10b981] border border-[#10b981]"
-                        : "bg-[#ba1a1a] border border-[#ba1a1a]"
-                    }`}
-                    style={{ height: candle.height }}
-                  ></div>
-                </div>
-              ))}
-            </div>
-
             {/* Floating Live Data Tooltip */}
-            <div className="absolute top-4 left-4 bg-white/90 border border-[#c3c6d7] p-3 rounded shadow-sm backdrop-blur-sm z-10 max-w-[220px]">
-              <p className="text-[9px] font-bold text-[#737686] uppercase tracking-wide mb-1 font-mono">
-                DATA: {marketData?.timestamp ? new Date(marketData.timestamp).toLocaleTimeString() : "2026-06-20 14:12"}
-              </p>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-xs">
-                <span className="text-[#434655]">O: <span className="font-semibold text-[#191b23]">{(currentIndexPrice * 0.998).toFixed(2)}</span></span>
-                <span className="text-[#434655]">H: <span className="font-semibold text-[#191b23]">{(currentIndexPrice * 1.002).toFixed(2)}</span></span>
-                <span className="text-[#434655]">L: <span className="font-semibold text-[#191b23]">{(currentIndexPrice * 0.995).toFixed(2)}</span></span>
-                <span className="text-[#434655]">C: <span className="font-semibold text-[#004ac6]">{currentIndexPrice.toFixed(2)}</span></span>
-                <span className="col-span-2 text-[#434655]">Chg: <span className={`font-semibold ${currentIndexChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>{currentIndexChange >= 0 ? "+" : ""}{currentIndexChange.toFixed(2)}%</span></span>
-              </div>
-            </div>
+            {(() => {
+              const activeData = hoveredCandle || (lastCandle ? {
+                time: lastCandle.date,
+                open: lastCandle.open,
+                high: lastCandle.high,
+                low: lastCandle.low,
+                close: lastCandle.close,
+                volume: lastCandle.volume,
+                change: lastCandle.open ? ((lastCandle.close - lastCandle.open) / lastCandle.open) * 100 : currentIndexChange
+              } : {
+                time: "Live",
+                open: currentIndexPrice * 0.998,
+                high: currentIndexPrice * 1.002,
+                low: currentIndexPrice * 0.995,
+                close: currentIndexPrice,
+                volume: 0,
+                change: currentIndexChange
+              });
 
-            {/* Price Axis (Right) */}
-            <div className="absolute right-0 top-0 bottom-0 w-16 border-l border-[#c3c6d7] bg-[#faf8ff] flex flex-col justify-between py-10 text-[10px] font-mono text-[#737686] items-center">
-              <span>{tickValues[0].toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-              <span>{tickValues[1].toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-              <span className="bg-[#004ac6] text-white px-1.5 py-0.5 rounded-sm w-full text-center font-bold">
-                {currentIndexPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-              </span>
-              <span>{tickValues[3].toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-              <span>{tickValues[4].toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-              <span>{tickValues[5].toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-            </div>
+              const isPositive = activeData.change >= 0;
+              const isFlat = activeData.change === 0;
 
-            {/* Volume Histogram (Overlayed bottom) */}
-            <div className="w-full h-16 flex items-end gap-1 px-4 mb-2 opacity-35 pointer-events-none">
-              <div className="bg-[#ba1a1a] w-full h-1/2 rounded-t-sm"></div>
-              <div className="bg-[#10b981] w-full h-2/3 rounded-t-sm"></div>
-              <div className="bg-[#10b981] w-full h-full rounded-t-sm"></div>
-              <div className="bg-[#ba1a1a] w-full h-3/4 rounded-t-sm"></div>
-              <div className="bg-[#ba1a1a] w-full h-1/2 rounded-t-sm"></div>
-              <div className="bg-[#10b981] w-full h-[83%] rounded-t-sm"></div>
-              <div className="bg-[#10b981] w-full h-full rounded-t-sm"></div>
-              <div className="bg-[#10b981] w-full h-2/3 rounded-t-sm"></div>
-              <div className="bg-[#ba1a1a] w-full h-1/3 rounded-t-sm"></div>
-              <div className="bg-[#10b981] w-full h-[80%] rounded-t-sm"></div>
-            </div>
+              return (
+                <div className="absolute top-4 left-4 bg-white/90 border border-[#c3c6d7] p-2.5 rounded shadow-sm backdrop-blur-sm z-10 max-w-[240px] pointer-events-none select-none">
+                  <p className="text-[9px] font-bold text-[#737686] uppercase tracking-wide mb-1 font-mono">
+                    DATA: {activeData.time}
+                  </p>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono text-[11px]">
+                    <span className="text-[#434655]">O: <span className="font-semibold text-[#191b23]">{activeData.open.toFixed(2)}</span></span>
+                    <span className="text-[#434655]">H: <span className="font-semibold text-[#191b23]">{activeData.high.toFixed(2)}</span></span>
+                    <span className="text-[#434655]">L: <span className="font-semibold text-[#191b23]">{activeData.low.toFixed(2)}</span></span>
+                    <span className="text-[#434655]">C: <span className="font-semibold text-[#004ac6]">{activeData.close.toFixed(2)}</span></span>
+                    <span className="col-span-2 text-[#434655] mt-0.5 pt-0.5 border-t border-[#e7e7f3] flex justify-between">
+                      <span>CHG:</span> 
+                      <span className={`font-semibold ${isFlat ? "text-[#737686]" : (isPositive ? "text-[#10b981]" : "text-[#ba1a1a]")}`}>
+                        {isFlat ? "—" : `${isPositive ? "+" : ""}${activeData.change.toFixed(2)}%`}
+                      </span>
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </section>
 
         {/* Right Rail: Breadth & Live Feed */}
-        <aside className="w-80 flex flex-col bg-white shrink-0 overflow-hidden border-l border-[#c3c6d7]">
+        <aside className="w-80 flex flex-col bg-white shrink-0 overflow-hidden border-l border-[#c3c6d7] min-h-0">
           
           {/* Heatmap Breadth */}
           <div className="p-4 border-b border-[#c3c6d7]">
@@ -385,8 +719,10 @@ export default function MarketIntelligencePage() {
             <div className="px-4 py-2 bg-[#f3f3fe] border-b border-[#c3c6d7] flex items-center justify-between">
               <h3 className="text-[11px] font-bold text-[#191b23] uppercase tracking-wider">Institutional Feed</h3>
               <div className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse"></span>
-                <span className="text-[9px] uppercase tracking-widest text-[#737686] font-bold font-mono">Live</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${marketStatus.open ? "bg-[#10b981] animate-pulse" : "bg-[#ba1a1a]"}`}></span>
+                <span className="text-[9px] uppercase tracking-widest text-[#737686] font-bold font-mono">
+                  {marketStatus.label}
+                </span>
               </div>
             </div>
             
@@ -397,18 +733,20 @@ export default function MarketIntelligencePage() {
                   href={item.link && item.link !== "N/A" ? item.link : undefined}
                   target={item.link && item.link !== "N/A" ? "_blank" : undefined}
                   rel="noopener noreferrer"
-                  className={`p-3 hover:bg-[#faf8ff] hover:text-[#004ac6] transition-all block border-b border-[#e7e7f3] ${
+                  className={`p-3.5 hover:bg-[#faf8ff] transition-all block border-b border-[#e7e7f3] group ${
                     item.link && item.link !== "N/A" ? "cursor-pointer" : "cursor-default opacity-80"
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[9px] font-bold text-[#004ac6] tracking-wider font-mono uppercase">{item.publisher}</span>
-                    <span className="text-[9px] text-[#737686] font-mono font-medium truncate max-w-[120px]">{item.date}</span>
+                    <span className="text-[9px] text-[#737686] font-mono font-medium truncate max-w-[120px]" title={item.date}>
+                      {formatRelativeTime(item.date)}
+                    </span>
                   </div>
-                  <p className="text-xs leading-normal text-[#191b23] font-semibold hover:text-[#004ac6] transition-colors">
+                  <p className="text-[13px] leading-snug text-[#191b23] font-bold group-hover:text-[#004ac6] transition-colors">
                     {item.title}
                   </p>
-                  <p className="text-[10px] leading-normal text-[#737686] mt-0.5 line-clamp-2">
+                  <p className="text-[10px] leading-relaxed text-[#737686] mt-1 line-clamp-2">
                     {item.summary}
                   </p>
                 </a>
@@ -418,47 +756,7 @@ export default function MarketIntelligencePage() {
         </aside>
       </div>
 
-      {/* Bottom Footer Status Bar */}
-        <footer className="no-print h-12 border-t border-[#c3c6d7] bg-white flex items-center px-6 gap-6 shrink-0 z-10 select-none">
-        <div className="flex items-center gap-2 border-r border-[#c3c6d7] pr-6">
-          <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider">USD/INR</span>
-          <span className="font-mono text-sm font-bold text-[#191b23]">₹{usdinrPrice.toFixed(2)}</span>
-          <span className={`text-xs font-semibold ${usdinrChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
-            ({usdinrChange >= 0 ? "+" : ""}{usdinrChange.toFixed(2)}%)
-          </span>
-        </div>
 
-        <div className="flex items-center gap-2 border-r border-[#c3c6d7] pr-6">
-          <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider">Health Score</span>
-          <div className="flex items-center gap-1">
-            <div className="w-1.5 h-1.5 rounded-full bg-[#10b981]"></div>
-            <div className="w-1.5 h-1.5 rounded-full bg-[#10b981]"></div>
-            <div className="w-1.5 h-1.5 rounded-full bg-[#10b981]"></div>
-            <div className="w-1.5 h-1.5 rounded-full bg-[#10b981]"></div>
-            <div className="w-1.5 h-1.5 rounded-full bg-[#c3c6d7]"></div>
-            <span className="text-xs font-bold text-[#191b23] ml-1">82/100</span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-6 overflow-hidden text-xs">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider">Margin</span>
-            <span className="font-medium text-[#191b23]">₹8.4L Available</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider">Open Positions</span>
-            <span className="font-medium text-[#191b23]">12 Active</span>
-          </div>
-        </div>
-
-        <div className="ml-auto flex items-center gap-5 text-xs text-[#737686] font-mono">
-          <div className="flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-[#10b981]"></div>
-            <span className="font-semibold text-[#434655]">Server: Tokyo-1</span>
-          </div>
-          <span className="font-semibold">Latency: 24ms</span>
-        </div>
-      </footer>
 
       {/* Execution Modal */}
       <div

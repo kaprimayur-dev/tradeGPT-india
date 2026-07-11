@@ -117,7 +117,7 @@ def setup_logging() -> logging.Logger:
 
 
 def parse_portfolio(input_str: str) -> Dict[str, float]:
-    """Parses a raw multi-line portfolio input.
+    """Parses a raw multi-line portfolio input with strict validation.
     
     Expected format:
     TCS 40
@@ -138,20 +138,43 @@ def parse_portfolio(input_str: str) -> Dict[str, float]:
         if not line:
             continue
             
-        # Match stock name and allocation number (integer or decimal) at the end
-        match = re.match(r'^(.*?)\s+(\d+(?:\.\d+)?)$', line)
-        if match:
-            stock_name = match.group(1).strip()
-            allocation = float(match.group(2))
-            holdings[stock_name] = allocation
+        # Match stock name and allocation number (including optional negative sign) at the end
+        match = re.match(r'^(.*?)\s+(-?\d+(?:\.\d+)?)$', line)
+        if not match:
+            raise ValueError(f"Invalid format in line: '{line}'. Expected format: '<Stock Name> <Weight>' (e.g. 'TCS 40')")
             
+        stock_name = match.group(1).strip().upper()
+        if not stock_name:
+            raise ValueError(f"Stock symbol/name cannot be empty in line: '{line}'")
+            
+        allocation_str = match.group(2)
+        try:
+            allocation = float(allocation_str)
+        except ValueError:
+            raise ValueError(f"Invalid allocation value '{allocation_str}' in line: '{line}'")
+            
+        if allocation < 0:
+            raise ValueError(f"Negative allocation for '{stock_name}' ({allocation}%) is not allowed. Allocations must be positive.")
+            
+        if allocation == 0:
+            raise ValueError(f"Zero allocation for '{stock_name}' is not allowed.")
+            
+        if stock_name in holdings:
+            raise ValueError(f"Duplicate stock symbol '{stock_name}' detected. Please consolidate allocations.")
+            
+        holdings[stock_name] = allocation
+        
+    if not holdings:
+        raise ValueError("Could not parse any valid portfolio holdings. Please use the format: '<Stock Name> <Weight>'")
+        
     # Normalize weights so they sum to 100
     total = sum(holdings.values())
     if total == 0:
-        return holdings
+        raise ValueError("Total portfolio allocation weight cannot be zero.")
         
     normalized = {company: round((weight / total) * 100, 2) for company, weight in holdings.items()}
     return normalized
+
 
 
 def calculate_portfolio_metrics(
@@ -200,6 +223,7 @@ def diagnose_portfolio_data(portfolio_str: str, db: Chroma, logger: logging.Logg
         dict: Containing 'report', 'sources', 'holdings', 'metrics', and 'realtime_data_map'.
     """
     logger.info("Initializing Portfolio Diagnosis Data...")
+    logger.info(f"diagnose_portfolio_data: portfolio_str={repr(portfolio_str)}")
     
     # 1. Parse and normalize holdings
     holdings = parse_portfolio(portfolio_str)

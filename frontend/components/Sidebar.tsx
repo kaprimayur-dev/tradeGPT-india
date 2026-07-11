@@ -1,15 +1,64 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import { api } from "../app/api";
 
-export default function Sidebar() {
+interface SidebarProps {
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+}
+
+export default function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const [showAddTicker, setShowAddTicker] = useState(false);
   const [newTicker, setNewTicker] = useState("");
-  const [watchlistTickers, setWatchlistTickers] = useState<string[]>([]);
-  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [deskDropdownOpen, setDeskDropdownOpen] = useState(false);
+
+  const [watchlistTickers, setWatchlistTickers] = useState<string[]>(["RELIANCE", "HDFCBANK", "TCS"]);
+  const [watchlistData, setWatchlistData] = useState<Record<string, { price: number; change: number; sparkline?: number[] }>>({});
+
+  useEffect(() => {
+    setMounted(true);
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("trade_watchlist");
+      if (saved) {
+        try {
+          setWatchlistTickers(JSON.parse(saved));
+        } catch (e) {
+          console.error("Failed to parse watchlist from localStorage", e);
+        }
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mounted && typeof window !== "undefined") {
+      localStorage.setItem("trade_watchlist", JSON.stringify(watchlistTickers));
+    }
+  }, [watchlistTickers, mounted]);
+
+  const fetchWatchlistPrices = async () => {
+    try {
+      if (watchlistTickers.length === 0) return;
+      const res = await api.getMarketData(undefined, undefined, watchlistTickers);
+      if (res.watchlist) {
+        setWatchlistData(res.watchlist);
+      }
+    } catch (err) {
+      console.error("Failed to load watchlist prices", err);
+    }
+  };
+
+  useEffect(() => {
+    if (!mounted) return;
+    fetchWatchlistPrices();
+    const interval = setInterval(fetchWatchlistPrices, 30000);
+    return () => clearInterval(interval);
+  }, [watchlistTickers, mounted]);
 
   const menuItems = [
     {
@@ -42,233 +91,279 @@ export default function Sidebar() {
       href: "/portfolio-intelligence",
       activePattern: /^\/portfolio-intelligence/,
     },
-    {
-      name: "Settings",
-      icon: "settings",
-      href: "#",
-      activePattern: null,
-    },
   ];
 
+  // Desks/Workspaces configuration
+  const desks = [
+    { id: "market", label: "Markets Desk", path: "/market-intelligence", icon: "monitoring" },
+    { id: "research", label: "RAG Research Desk", path: "/institutional-research", icon: "search_insights" },
+    { id: "portfolio", label: "Portfolio Suite", path: "/portfolio-intelligence", icon: "donut_large" },
+    { id: "quant", label: "Quant Strategy Lab", path: "/quantitative-strategy", icon: "analytics" },
+  ];
+
+  const getActiveDesk = () => {
+    if (pathname.includes("/market-intelligence")) return desks[0];
+    if (pathname.includes("/institutional-research")) return desks[1];
+    if (pathname.includes("/portfolio-intelligence")) return desks[2];
+    if (pathname.includes("/quantitative-strategy")) return desks[3];
+    return desks[0];
+  };
+
+  const activeDesk = getActiveDesk();
+
   return (
-    <aside className="no-print fixed left-0 top-0 h-full w-[260px] bg-white border-r border-[#c3c6d7] flex flex-col py-6 px-4 z-30 font-body select-none">
+    <aside
+      className={`no-print fixed left-0 top-0 h-full bg-surface-base border-r border-border-subtle flex flex-col py-6 px-4 z-30 font-body select-none transition-all duration-300 ease-in-out ${
+        collapsed ? "w-[70px]" : "w-[260px]"
+      }`}
+    >
       {/* Brand Header */}
-      <div className="mb-8 px-2 flex items-center gap-3">
-        <div className="w-8 h-8 rounded bg-[#004ac6] flex items-center justify-center text-white shrink-0">
-          <span className="material-symbols-outlined !text-[1.25rem]">terminal</span>
-        </div>
-        <div>
-          <h1 className="font-display font-bold text-lg text-[#191b23] leading-tight">Alpha Terminal</h1>
-          <p className="text-[10px] text-[#737686] font-bold tracking-widest uppercase">Institutional Access</p>
+      <div className="mb-6 px-1 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded bg-primary flex items-center justify-center text-white shrink-0 shadow-md">
+            <span className="material-symbols-outlined !text-[1.25rem]">terminal</span>
+          </div>
+          {!collapsed && (
+            <div>
+              <h1 className="font-display font-bold text-base text-text-primary leading-tight">Alpha Terminal</h1>
+              <p className="text-[9px] text-text-muted font-bold tracking-widest uppercase opacity-80">Institutional</p>
+            </div>
+          )}
         </div>
       </div>
 
+      {/* Desk/Workspace Selector */}
+      {!collapsed && (
+        <div className="relative mb-5 px-1">
+          <div
+            onClick={() => setDeskDropdownOpen(!deskDropdownOpen)}
+            className="flex items-center justify-between border border-border-subtle rounded-lg px-2.5 py-1.5 bg-canvas hover:bg-surface-elevation transition-all cursor-pointer active-press"
+          >
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary !text-[1.1rem]">
+                {activeDesk.icon}
+              </span>
+              <span className="text-xs font-bold text-text-primary">{activeDesk.label}</span>
+            </div>
+            <span className="material-symbols-outlined text-text-muted !text-xs">swap_vert</span>
+          </div>
+
+          {deskDropdownOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setDeskDropdownOpen(false)} />
+              <div className="absolute top-9 left-0 right-0 bg-surface-base border border-border-subtle rounded-lg shadow-xl z-50 py-1 text-xs font-semibold overflow-hidden">
+                {desks.map((d) => (
+                  <div
+                    key={d.id}
+                    onClick={() => {
+                      router.push(d.path);
+                      setDeskDropdownOpen(false);
+                    }}
+                    className={`flex items-center gap-2 px-3 py-2 hover:bg-canvas cursor-pointer ${
+                      activeDesk.id === d.id ? "text-primary bg-secondary-container/20" : "text-text-primary"
+                    }`}
+                  >
+                    <span className="material-symbols-outlined !text-sm text-text-muted">{d.icon}</span>
+                    <span>{d.label}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Navigation Router */}
-      <nav className="flex-1 space-y-1">
+      <nav className="flex-1 space-y-1.5">
         {menuItems.map((item) => {
           const isActive = item.activePattern ? item.activePattern.test(pathname) : false;
-          
+
           return (
             <Link
               key={item.name}
               href={item.href}
+              title={collapsed ? item.name : undefined}
               onClick={(e) => {
-                if (item.name === "Settings") {
-                  e.preventDefault();
-                  setShowSettingsPanel((v) => !v);
-                } else if (item.name === "Watchlist") {
+                if (item.name === "Watchlist") {
                   e.preventDefault();
                   setShowAddTicker((v) => !v);
                 }
               }}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all active-press ${
                 isActive
-                  ? "bg-[#d0e1fb] text-[#0b1c30] font-semibold"
-                  : "text-[#434655] hover:bg-[#f3f3fe] transition-colors"
+                  ? "bg-secondary-container text-on-secondary-container font-bold shadow-sm"
+                  : "text-text-muted hover:bg-canvas"
               }`}
             >
               <span className="material-symbols-outlined !text-[1.25rem] shrink-0">
                 {item.icon}
               </span>
-              <span className="text-sm font-medium">{item.name}</span>
+              {!collapsed && <span className="text-xs font-bold tracking-wide">{item.name}</span>}
             </Link>
           );
         })}
       </nav>
 
-      {/* Collapsible Watchlist Section */}
-      <div className="mt-auto border-t border-[#c3c6d7] pt-4">
-        <div className="flex items-center justify-between mb-3 px-2">
-          <h3 className="text-[11px] font-bold text-[#737686] tracking-wider uppercase">Watchlist</h3>
-          <span 
-            onClick={() => setShowAddTicker((v) => !v)}
-            className="material-symbols-outlined text-[#737686] hover:text-[#004ac6] cursor-pointer !text-sm"
-            title="Add ticker"
-          >
-            add
-          </span>
-        </div>
-
-        {/* Add Ticker Mini-Modal */}
-        {showAddTicker && (
-          <div className="mx-1 mb-3 bg-[#f3f3fe] border border-[#c3c6d7] rounded-lg p-2">
-            <p className="text-[9px] text-[#737686] uppercase font-bold mb-1.5">Add Symbol to Watchlist</p>
-            <div className="flex gap-1">
-              <input
-                type="text"
-                value={newTicker}
-                onChange={(e) => setNewTicker(e.target.value.toUpperCase())}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && newTicker.trim()) {
-                    setWatchlistTickers((prev) => [...prev, newTicker.trim()]);
-                    setNewTicker("");
-                    setShowAddTicker(false);
-                  }
-                }}
-                placeholder="E.g. INFY"
-                className="flex-1 bg-white border border-[#c3c6d7] rounded px-2 py-1 text-xs font-mono text-[#191b23] outline-none focus:border-[#004ac6] uppercase"
-                autoFocus
-              />
-              <button
-                onClick={() => {
-                  if (newTicker.trim()) {
-                    setWatchlistTickers((prev) => [...prev, newTicker.trim()]);
-                    setNewTicker("");
-                    setShowAddTicker(false);
-                  }
-                }}
-                className="px-2 py-1 bg-[#004ac6] text-white text-[10px] font-bold rounded hover:bg-[#003ea8] transition-colors"
-              >
-                Add
-              </button>
-            </div>
+      {/* Collapsible Watchlist Section (only visible when expanded) */}
+      {!collapsed && (
+        <div className="mt-auto border-t border-border-subtle pt-4 max-h-[180px] overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between mb-2 px-1">
+            <h3 className="text-[9px] font-bold text-text-muted tracking-wider uppercase">My Watchlist</h3>
+            <span
+              onClick={() => setShowAddTicker((v) => !v)}
+              className="material-symbols-outlined text-text-muted hover:text-primary cursor-pointer !text-xs"
+              title="Add ticker"
+            >
+              add
+            </span>
           </div>
-        )}
-        <div className="space-y-3 px-1">
-          {/* Watchlist Tickers */}
-          <Link
-            href="/institutional-research?symbol=RELIANCE"
-            onClick={() => {
-              setTimeout(() => {
-                window.dispatchEvent(new Event("symbolChanged"));
-              }, 100);
-            }}
-            className="flex items-center justify-between border-b border-[#e7e7f3] pb-2 hover:bg-[#faf8ff] px-1 rounded transition-colors block cursor-pointer"
-          >
-            <div>
-              <p className="font-mono text-xs font-bold text-[#191b23]">RELIANCE</p>
-              <p className="text-[10px] text-[#737686]">2,945.50</p>
-            </div>
-            <div className="text-right">
-              <p className="text-xs font-semibold text-[#bc4800]">+1.24%</p>
-              <div className="w-12 h-4 overflow-hidden mt-1 opacity-70">
-                <svg className="stroke-[#bc4800] fill-none stroke-2" viewBox="0 0 100 20">
-                  <polyline points="0,15 20,10 40,18 60,5 80,8 100,2" />
-                </svg>
-              </div>
-            </div>
-          </Link>
 
-          <Link
-            href="/institutional-research?symbol=HDFCBANK"
-            onClick={() => {
-              setTimeout(() => {
-                window.dispatchEvent(new Event("symbolChanged"));
-              }, 100);
-            }}
-            className="flex items-center justify-between border-b border-[#e7e7f3] pb-2 hover:bg-[#faf8ff] px-1 rounded transition-colors block cursor-pointer"
-          >
-            <div>
-              <p className="font-mono text-xs font-bold text-[#191b23]">HDFCBANK</p>
-              <p className="text-[10px] text-[#737686]">1,452.10</p>
-            </div>
-            <div className="text-right">
-              <p className="text-xs font-semibold text-[#ba1a1a]">-0.85%</p>
-              <div className="w-12 h-4 overflow-hidden mt-1 opacity-70">
-                <svg className="stroke-[#ba1a1a] fill-none stroke-2" viewBox="0 0 100 20">
-                  <polyline points="0,5 20,8 40,2 60,15 80,12 100,18" />
-                </svg>
+          {/* Add Ticker Mini-Modal */}
+          {showAddTicker && (
+            <div className="mx-1 mb-2 bg-canvas border border-border-subtle rounded-lg p-2 shrink-0">
+              <p className="text-[9px] text-text-muted uppercase font-bold mb-1">Add Symbol</p>
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  value={newTicker}
+                  onChange={(e) => setNewTicker(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newTicker.trim()) {
+                      setWatchlistTickers((prev) => [...prev, newTicker.trim()]);
+                      setNewTicker("");
+                      setShowAddTicker(false);
+                    }
+                  }}
+                  placeholder="E.g. INFY"
+                  className="flex-1 bg-surface-base border border-border-subtle rounded px-2 py-0.5 text-xs font-mono text-text-primary outline-none focus:border-primary uppercase"
+                  autoFocus
+                />
+                <button
+                  onClick={() => {
+                    if (newTicker.trim()) {
+                      setWatchlistTickers((prev) => [...prev, newTicker.trim()]);
+                      setNewTicker("");
+                      setShowAddTicker(false);
+                    }
+                  }}
+                  className="px-2 py-0.5 bg-primary text-white text-[10px] font-bold rounded hover:bg-primary-fixed-dim transition-colors"
+                >
+                  Add
+                </button>
               </div>
             </div>
-          </Link>
+          )}
 
-          <Link
-            href="/institutional-research?symbol=TCS"
-            onClick={() => {
-              setTimeout(() => {
-                window.dispatchEvent(new Event("symbolChanged"));
-              }, 100);
-            }}
-            className="flex items-center justify-between border-b border-[#e7e7f3] pb-2 hover:bg-[#faf8ff] px-1 rounded transition-colors block cursor-pointer"
-          >
-            <div>
-              <p className="font-mono text-xs font-bold text-[#191b23]">TCS</p>
-              <p className="text-[10px] text-[#737686]">3,890.00</p>
-            </div>
-            <div className="text-right">
-              <p className="text-xs font-semibold text-[#bc4800]">+0.32%</p>
-              <div className="w-12 h-4 overflow-hidden mt-1 opacity-70">
-                <svg className="stroke-[#bc4800] fill-none stroke-2" viewBox="0 0 100 20">
-                  <polyline points="0,10 25,12 50,5 75,8 100,5" />
-                </svg>
+          <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2.5">
+            {!mounted ? (
+              <div className="space-y-2 animate-pulse">
+                <div className="h-3 w-16 bg-border-subtle rounded"></div>
+                <div className="h-3 w-12 bg-border-subtle rounded"></div>
               </div>
-            </div>
-          </Link>
-        </div>
+            ) : (
+              watchlistTickers.map((ticker) => {
+                const data = watchlistData[ticker.toUpperCase()];
+                const price = data ? data.price : null;
+                const change = data ? data.change : null;
+                const sparkline = data?.sparkline || [];
+                const isPositive = change !== null && change > 0;
+                const isFlat = change === null || change === 0;
 
-        {/* Dynamic Tickers added by user */}
-        {watchlistTickers.map((ticker) => (
-          <Link
-            key={ticker}
-            href={`/institutional-research?symbol=${ticker}`}
-            onClick={() => {
-              setTimeout(() => window.dispatchEvent(new Event("symbolChanged")), 100);
-            }}
-            className="flex items-center justify-between border-b border-[#e7e7f3] pb-2 hover:bg-[#faf8ff] px-1 rounded transition-colors block cursor-pointer"
-          >
-            <div>
-              <p className="font-mono text-xs font-bold text-[#191b23]">{ticker}</p>
-              <p className="text-[10px] text-[#737686]">Click to research</p>
-            </div>
-            <span className="material-symbols-outlined text-[#c3c6d7] !text-sm">arrow_forward</span>
-          </Link>
-        ))}
+                let sparklineSvg = null;
+                if (sparkline && sparkline.length > 1) {
+                  const minVal = Math.min(...sparkline);
+                  const maxVal = Math.max(...sparkline);
+                  const range = maxVal - minVal || 1;
+                  const points = sparkline
+                    .map((val, idx) => {
+                      const x = (idx / (sparkline.length - 1)) * 40;
+                      const y = 14 - ((val - minVal) / range) * 12;
+                      return `${x},${y}`;
+                    })
+                    .join(" ");
 
-        {/* Settings Panel */}
-        {showSettingsPanel && (
-          <div className="mx-1 mb-3 bg-[#f3f3fe] border border-[#c3c6d7] rounded-lg p-3">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[9px] text-[#191b23] uppercase font-bold tracking-wider">Terminal Settings</p>
-              <button onClick={() => setShowSettingsPanel(false)} className="text-[#737686] hover:text-[#191b23]">
-                <span className="material-symbols-outlined !text-sm">close</span>
-              </button>
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-[#434655]">Theme</span>
-                <span className="text-[10px] font-bold text-[#004ac6] font-mono">Light (Default)</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-[#434655]">API Endpoint</span>
-                <span className="text-[10px] font-bold text-[#191b23] font-mono">localhost:8000</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-[#434655]">Cache TTL</span>
-                <span className="text-[10px] font-bold text-[#191b23] font-mono">120s</span>
-              </div>
-            </div>
+                  sparklineSvg = (
+                    <svg className="w-8 h-4 mx-1.5 text-current overflow-visible shrink-0 pointer-events-none" viewBox="0 0 40 15">
+                      <polyline
+                        fill="none"
+                        stroke={isFlat ? "#737686" : isPositive ? "#10b981" : "#ba1a1a"}
+                        strokeWidth="1.2"
+                        points={points}
+                      />
+                    </svg>
+                  );
+                }
+
+                return (
+                  <div
+                    key={ticker}
+                    className="flex items-center justify-between border-b border-border-subtle/40 pb-1.5 hover:bg-canvas px-1 rounded transition-colors group cursor-pointer"
+                  >
+                    <Link
+                      href={`/institutional-research?symbol=${ticker}`}
+                      className="flex-1 min-w-0"
+                    >
+                      <p className="font-mono text-xs font-bold text-text-primary truncate">{ticker.toUpperCase()}</p>
+                      <div className="flex items-center mt-0.5">
+                        <p className="text-[9px] text-text-muted font-mono shrink-0">
+                          {price !== null ? `₹${price.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : "..."}
+                        </p>
+                        {sparklineSvg}
+                      </div>
+                    </Link>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {change !== null && (
+                        <span className={`text-[9px] font-bold font-mono ${isFlat ? "text-text-muted" : isPositive ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
+                          {isFlat ? "—" : `${isPositive ? "+" : ""}${change.toFixed(2)}%`}
+                        </span>
+                      )}
+                      <span
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          setWatchlistTickers((prev) => prev.filter((t) => t !== ticker));
+                        }}
+                        className="material-symbols-outlined text-text-muted hover:text-alert-red cursor-pointer !text-xs opacity-0 group-hover:opacity-100 transition-opacity p-0.5"
+                        title="Remove"
+                      >
+                        delete
+                      </span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            {watchlistTickers.length === 0 && (
+              <p className="text-[10px] text-text-muted text-center italic py-2">Watchlist empty</p>
+            )}
           </div>
+        </div>
+      )}
+
+      {/* Collapse Toggle & Profile Row */}
+      <div className="mt-auto border-t border-border-subtle pt-4 shrink-0">
+        {onToggleCollapse && (
+          <button
+            onClick={onToggleCollapse}
+            className="w-full flex items-center justify-center gap-2 py-1.5 mb-2 hover:bg-canvas rounded-lg text-text-muted hover:text-text-primary transition-all text-xs font-bold active-press"
+          >
+            <span className="material-symbols-outlined !text-lg">
+              {collapsed ? "arrow_forward_ios" : "arrow_back_ios"}
+            </span>
+            {!collapsed && <span>Collapse Sidebar</span>}
+          </button>
         )}
 
-        {/* Profile Card */}
-        <div className="mt-4 pt-4 border-t border-[#e7e7f3] flex items-center gap-3 px-1">
-          <div className="w-9 h-9 rounded-full bg-[#d0e1fb] flex items-center justify-center text-[#004ac6] font-bold text-xs shrink-0 select-none">
+        <div className="flex items-center gap-3 px-1 mt-1">
+          <div className="w-9 h-9 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container font-bold text-xs shrink-0 select-none shadow-inner">
             AS
           </div>
-          <div className="overflow-hidden">
-            <p className="text-xs font-bold text-[#191b23] truncate">Alex Sterling</p>
-            <p className="text-[10px] text-[#434655] font-medium tracking-wide uppercase">Senior Quant</p>
-          </div>
+          {!collapsed && (
+            <div className="overflow-hidden">
+              <p className="text-xs font-bold text-text-primary truncate">Alex Sterling</p>
+              <p className="text-[10px] text-text-muted font-semibold uppercase tracking-wider">Senior Quant</p>
+            </div>
+          )}
         </div>
       </div>
     </aside>
