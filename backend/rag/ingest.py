@@ -6,12 +6,19 @@ from dotenv import load_dotenv
 
 # Ensure the backend directory is in the python path for importing modules properly
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
+BACKEND_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
 
 # Load configuration environment variables from .env
-load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+env_repo = os.path.join(BACKEND_DIR, "..", ".env")
+env_backend = os.path.join(BACKEND_DIR, ".env")
+if os.path.exists(env_repo):
+    load_dotenv(env_repo)
+elif os.path.exists(env_backend):
+    load_dotenv(env_backend)
+else:
+    load_dotenv()
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -20,8 +27,12 @@ from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
 
 # --- Configuration Constants ---
-REPORTS_DIR = os.getenv("RAG_REPORTS_DIR", os.path.join(PROJECT_ROOT, "data", "reports"))
-CHROMA_DB_DIR = os.getenv("RAG_CHROMA_DB_DIR", os.path.join(PROJECT_ROOT, "backend", "chromadb_store"))
+repo_data_dir = os.path.join(BACKEND_DIR, "..", "data", "reports")
+backend_data_dir = os.path.join(BACKEND_DIR, "data", "reports")
+default_reports_dir = repo_data_dir if os.path.exists(repo_data_dir) else backend_data_dir
+
+REPORTS_DIR = os.getenv("RAG_REPORTS_DIR", default_reports_dir)
+CHROMA_DB_DIR = os.getenv("RAG_CHROMA_DB_DIR", os.path.join(BACKEND_DIR, "chromadb_store"))
 EMBEDDING_MODEL_NAME = os.getenv("RAG_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "200"))
@@ -46,7 +57,7 @@ def setup_logging() -> logging.Logger:
         logger.addHandler(stream_handler)
         
         # File output (saved inside backend folder)
-        log_file_path = os.path.join(PROJECT_ROOT, "backend", "rag_ingest.log")
+        log_file_path = os.path.join(BACKEND_DIR, "rag_ingest.log")
         file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
         file_handler.setFormatter(logging.Formatter(log_format))
         logger.addHandler(file_handler)

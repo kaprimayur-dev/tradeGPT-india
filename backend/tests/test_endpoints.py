@@ -45,7 +45,7 @@ class TestTradeGPTEndpoints(unittest.TestCase):
     def test_03_analyze_valid_portfolio(self):
         payload = {"portfolio": "TCS 60\nInfosys 40"}
         status, data = self._send_request("/analyze", method="POST", payload=payload)
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 200, f"Request failed with status {status}. Details: {data}")
         self.assertTrue(data.get("success"))
         self.assertIn("health_score", data)
         self.assertIn("hhi", data)

@@ -9,63 +9,69 @@ export default function InstitutionalResearchPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Bind values from API
-  const [recommendation, setRecommendation] = useState("OVERWEIGHT");
-  const [targetPrice, setTargetPrice] = useState(3450.00);
-  const [upside, setUpside] = useState(15.6);
+  const [recommendation, setRecommendation] = useState<string>("—");
+  const [targetPrice, setTargetPrice] = useState<number>(0);
+  const [upside, setUpside] = useState<number>(0);
   const [report, setReport] = useState<string | null>(null);
   
-  const [growthDrivers, setGrowthDrivers] = useState([
-    {
-      title: "New Energy Ecosystem",
-      icon: "bolt",
-      desc: "Implementation of the Dhirubhai Ambani Green Energy Giga Complex. Expected reduction in hydrogen production costs to $1/kg by 2030."
-    },
-    {
-      title: "Jio 5G Monetization",
-      icon: "signal_cellular_alt",
-      desc: "ARPU (Average Revenue Per User) expansion through 5G standalone adoption and fixed wireless access (JioAirFiber)."
-    }
-  ]);
+  const [growthDrivers, setGrowthDrivers] = useState<{ title: string; icon: string; desc: string }[]>([]);
 
-  const [riskFactors, setRiskFactors] = useState([
-    { factor: "Crude Volatility", impact: "High", prob: "Medium", score: 8.2 },
-    { factor: "Regulatory Headwinds", impact: "Moderate", prob: "Low", score: 6.5 },
-    { factor: "Capex Overrun", impact: "Medium", prob: "Medium", score: 7.4 },
-  ]);
+  const [riskFactors, setRiskFactors] = useState<{ factor: string; impact: string; prob: string; score: number }[]>([]);
 
-  const [citations, setCitations] = useState([
-    { title: "Annual Report FY2025-26", meta: "SEC | 128 Pages | PDF" },
-    { title: "Q4 Earnings Presentation", meta: "IR Portal | 45 Pages | PDF" },
-    { title: "Strategic New Energy Roadmap", meta: "Exchange Filing | 12 Pages | PDF" },
-    { title: "Sustainability Report 2026", meta: "ESG Filing | 88 Pages | PDF" },
-  ]);
+  const [citations, setCitations] = useState<{ title: string; meta: string }[]>([]);
 
   const [technicalMetrics, setTechnicalMetrics] = useState({
-    rsi: 58.42,
-    sma_50: 2845.10,
-    sma_200: 2612.45,
-    volume: "6.8M",
-    vwap: 2991.05
+    rsi: 0,
+    sma_50: 0,
+    sma_200: 0,
+    volume: "—",
+    vwap: 0
   });
 
   const [ownership, setOwnership] = useState({
-    promoter: 50.39,
-    fii: 22.12,
-    dii: 16.55,
-    public: 10.94
+    promoter: 0,
+    fii: 0,
+    dii: 0,
+    public: 0
   });
 
-  const [price, setPrice] = useState(2984.45);
-  const [change, setChange] = useState(-0.42);
-  const [mktCap, setMktCap] = useState("20.21T");
-  const [peRatio, setPeRatio] = useState(28.4);
-  const [beta, setBeta] = useState(0.92);
-  const [timestamp, setTimestamp] = useState("20 JUN 2026, 09:30 AM IST");
+  const [price, setPrice] = useState<number>(0);
+  const [change, setChange] = useState<number>(0);
+  const [mktCap, setMktCap] = useState<string>("—");
+  const [peRatio, setPeRatio] = useState<number>(0);
+  const [beta, setBeta] = useState<number>(0);
+  const [timestamp, setTimestamp] = useState<string>("—");
 
   const runSearch = async (symbol: string) => {
     if (!symbol.trim()) return;
     setLoading(true);
     setError(null);
+    setRecommendation("—");
+    setTargetPrice(0);
+    setUpside(0);
+    setReport(null);
+    setGrowthDrivers([]);
+    setRiskFactors([]);
+    setCitations([]);
+    setTechnicalMetrics({
+      rsi: 0,
+      sma_50: 0,
+      sma_200: 0,
+      volume: "—",
+      vwap: 0
+    });
+    setOwnership({
+      promoter: 0,
+      fii: 0,
+      dii: 0,
+      public: 0
+    });
+    setPrice(0);
+    setChange(0);
+    setMktCap("—");
+    setPeRatio(0);
+    setBeta(0);
+    setTimestamp("—");
     try {
       const res = await api.getStockResearch(symbol);
       if (res.success) {
@@ -241,7 +247,7 @@ export default function InstitutionalResearchPage() {
                   <h3 className="text-xs font-bold text-[#191b23] uppercase tracking-wider">Executive Summary</h3>
                 </div>
                 <div className="text-xs text-[#434655] leading-relaxed space-y-4 font-mono whitespace-pre-wrap select-text bg-[#faf8ff] p-4 border rounded border-slate-200 overflow-x-auto">
-                  {report || `Reliance Industries Limited (RIL) continues to demonstrate robust resilience across its diversified business segments...`}
+                  {report || "Compiling institutional research summary..."}
                 </div>
 
                 <div className="grid grid-cols-3 gap-4 py-4 border-y border-[#c3c6d7] font-mono mt-4">

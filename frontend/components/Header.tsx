@@ -19,6 +19,7 @@ export default function Header({
 }: HeaderProps) {
   const pathname = usePathname();
   const fetchedRef = useRef(false);
+  const [isMounted, setIsMounted] = useState(false);
   
   // States for market data indices
   const [marketData, setMarketData] = useState<MarketDataResponse | null>(null);
@@ -45,6 +46,9 @@ export default function Header({
       const data = await api.getMarketData();
       if (data.success) {
         setMarketData(data);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("tradeGPT_market_data_cache", JSON.stringify(data));
+        }
       }
     } catch (e) {
       console.warn("Failed to fetch market indices in Header:", e);
@@ -52,9 +56,26 @@ export default function Header({
   };
 
   useEffect(() => {
+    setIsMounted(true);
+    if (typeof window !== "undefined") {
+      const cache = localStorage.getItem("tradeGPT_market_data_cache");
+      if (cache) {
+        try {
+          const parsed = JSON.parse(cache);
+          if (parsed && parsed.success) {
+            setMarketData(parsed);
+          }
+        } catch (e) {
+          console.warn("Failed to parse market cache in Header:", e);
+        }
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     if (fetchedRef.current) return;
     fetchedRef.current = true;
-    const timer = setTimeout(fetchMarketData, 1000);
+    const timer = setTimeout(fetchMarketData, 500);
     return () => clearTimeout(timer);
   }, []);
 
@@ -76,62 +97,97 @@ export default function Header({
   }, [pathname]);
 
   // Dynamic variables for Default header
-  const niftyPrice = marketData?.indices?.NIFTY?.price || 24013.10;
-  const niftyChange = marketData?.indices?.NIFTY?.change || -0.64;
-  const sensexPrice = marketData?.indices?.SENSEX?.price || 76802.90;
-  const sensexChange = marketData?.indices?.SENSEX?.change || -0.78;
-  const bankniftyPrice = marketData?.indices?.BANKNIFTY?.price || 52000.00;
-  const bankniftyChange = marketData?.indices?.BANKNIFTY?.change || 0.15;
-  const usdinrPrice = marketData?.indices?.USDINR?.price || 83.50;
-  const usdinrChange = marketData?.indices?.USDINR?.change || -0.02;
-  const goldPrice = marketData?.indices?.GOLD?.price || 2350.00;
-  const goldChange = marketData?.indices?.GOLD?.change || 0.45;
+  const niftyPrice = marketData?.indices?.NIFTY?.price ?? null;
+  const niftyChange = marketData?.indices?.NIFTY?.change ?? null;
+  const sensexPrice = marketData?.indices?.SENSEX?.price ?? null;
+  const sensexChange = marketData?.indices?.SENSEX?.change ?? null;
+  const bankniftyPrice = marketData?.indices?.BANKNIFTY?.price ?? null;
+  const bankniftyChange = marketData?.indices?.BANKNIFTY?.change ?? null;
+  const usdinrPrice = marketData?.indices?.USDINR?.price ?? null;
+  const usdinrChange = marketData?.indices?.USDINR?.change ?? null;
+  const goldPrice = marketData?.indices?.GOLD?.price ?? null;
+  const goldChange = marketData?.indices?.GOLD?.change ?? null;
 
   // Dynamic variables for Research header
-  const symbolName = researchData?.symbol || "RELIANCE";
-  const priceVal = researchData?.price || 2984.45;
-  const changeVal = researchData?.change || -0.42;
-  const mktCapVal = researchData?.mkt_cap || "20.21T";
-  const peRatioVal = researchData?.pe_ratio || 28.4;
-  const betaVal = researchData?.beta || 0.92;
+  const symbolName = researchData?.symbol || "";
+  const priceVal = researchData?.price ?? null;
+  const changeVal = researchData?.change ?? null;
+  const mktCapVal = researchData?.mkt_cap || "—";
+  const peRatioVal = researchData?.pe_ratio ?? null;
+  const betaVal = researchData?.beta ?? null;
 
   // Marquee Ticker Loop Content
-  const tickerContent = (
+  const tickerContent = (isMounted && marketData) ? (
     <>
-      <span className="font-mono flex items-center gap-1.5 shrink-0">
+      <span className="font-mono flex items-center gap-1.5 shrink-0 animate-fade-in">
         <span className="font-bold text-text-primary">NIFTY 50:</span>
-        <span className="text-text-primary/95">{niftyPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-        <span className={`text-[10px] font-bold ${niftyChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
-          {niftyChange >= 0 ? "▲" : "▼"}{Math.abs(niftyChange).toFixed(2)}%
+        <span className="text-text-primary/95">
+          {niftyPrice !== null ? niftyPrice.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}
         </span>
+        {niftyChange !== null && (
+          <span className={`text-[10px] font-bold ${niftyChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
+            {niftyChange >= 0 ? "▲" : "▼"}{Math.abs(niftyChange).toFixed(2)}%
+          </span>
+        )}
       </span>
-      <span className="font-mono flex items-center gap-1.5 shrink-0">
+      <span className="font-mono flex items-center gap-1.5 shrink-0 animate-fade-in">
         <span className="font-bold text-text-primary">SENSEX:</span>
-        <span className="text-text-primary/95">{sensexPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-        <span className={`text-[10px] font-bold ${sensexChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
-          {sensexChange >= 0 ? "▲" : "▼"}{Math.abs(sensexChange).toFixed(2)}%
+        <span className="text-text-primary/95">
+          {sensexPrice !== null ? sensexPrice.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}
         </span>
+        {sensexChange !== null && (
+          <span className={`text-[10px] font-bold ${sensexChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
+            {sensexChange >= 0 ? "▲" : "▼"}{Math.abs(sensexChange).toFixed(2)}%
+          </span>
+        )}
       </span>
-      <span className="font-mono flex items-center gap-1.5 shrink-0">
+      <span className="font-mono flex items-center gap-1.5 shrink-0 animate-fade-in">
         <span className="font-bold text-text-primary">BANK NIFTY:</span>
-        <span className="text-text-primary/95">{bankniftyPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-        <span className={`text-[10px] font-bold ${bankniftyChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
-          {bankniftyChange >= 0 ? "▲" : "▼"}{Math.abs(bankniftyChange).toFixed(2)}%
+        <span className="text-text-primary/95">
+          {bankniftyPrice !== null ? bankniftyPrice.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}
         </span>
+        {bankniftyChange !== null && (
+          <span className={`text-[10px] font-bold ${bankniftyChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
+            {bankniftyChange >= 0 ? "▲" : "▼"}{Math.abs(bankniftyChange).toFixed(2)}%
+          </span>
+        )}
       </span>
-      <span className="font-mono flex items-center gap-1.5 shrink-0">
+      <span className="font-mono flex items-center gap-1.5 shrink-0 animate-fade-in">
         <span className="font-bold text-text-primary">USDINR:</span>
-        <span className="text-text-primary/95">{usdinrPrice.toFixed(2)}</span>
-        <span className={`text-[10px] font-bold ${usdinrChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
-          {usdinrChange >= 0 ? "▲" : "▼"}{Math.abs(usdinrChange).toFixed(2)}%
+        <span className="text-text-primary/95">
+          {usdinrPrice !== null ? usdinrPrice.toFixed(2) : "—"}
         </span>
+        {usdinrChange !== null && (
+          <span className={`text-[10px] font-bold ${usdinrChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
+            {usdinrChange >= 0 ? "▲" : "▼"}{Math.abs(usdinrChange).toFixed(2)}%
+          </span>
+        )}
       </span>
-      <span className="font-mono flex items-center gap-1.5 shrink-0">
+      <span className="font-mono flex items-center gap-1.5 shrink-0 animate-fade-in">
         <span className="font-bold text-text-primary">GOLD:</span>
-        <span className="text-text-primary/95">${goldPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-        <span className={`text-[10px] font-bold ${goldChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
-          {goldChange >= 0 ? "▲" : "▼"}{Math.abs(goldChange).toFixed(2)}%
+        <span className="text-text-primary/95">
+          {goldPrice !== null ? `$${goldPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : "—"}
         </span>
+        {goldChange !== null && (
+          <span className={`text-[10px] font-bold ${goldChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
+            {goldChange >= 0 ? "▲" : "▼"}{Math.abs(goldChange).toFixed(2)}%
+          </span>
+        )}
+      </span>
+    </>
+  ) : (
+    <>
+      <span className="font-mono flex items-center gap-2 shrink-0 opacity-50">
+        <span className="font-bold text-text-primary">NIFTY 50:</span>
+        <span className="w-14 h-3 bg-text-muted/20 rounded animate-pulse"></span>
+      </span>
+      <span className="font-mono flex items-center gap-2 shrink-0 opacity-50">
+        <span className="font-bold text-text-primary">SENSEX:</span>
+        <span className="w-16 h-3 bg-text-muted/20 rounded animate-pulse"></span>
+      </span>
+      <span className="font-mono flex items-center gap-2 shrink-0 opacity-50">
+        <span className="font-bold text-text-primary">BANK NIFTY:</span>
+        <span className="w-16 h-3 bg-text-muted/20 rounded animate-pulse"></span>
       </span>
     </>
   );
@@ -146,28 +202,32 @@ export default function Header({
         {pathname.startsWith("/institutional-research") ? (
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2">
-              <span className="font-display text-base tracking-tight text-primary font-bold uppercase">{symbolName}</span>
-              <span className="px-1.5 py-0.5 bg-canvas text-[9px] font-bold rounded border border-border-subtle text-text-muted">NSE</span>
+              <span className="font-display text-base tracking-tight text-primary font-bold uppercase">{symbolName || "SELECT STOCK"}</span>
+              {symbolName && <span className="px-1.5 py-0.5 bg-canvas text-[9px] font-bold rounded border border-border-subtle text-text-muted">NSE</span>}
             </div>
-            <div className="hidden md:flex items-center gap-5 text-xs whitespace-nowrap border-l border-border-subtle/50 pl-5">
-              <div className="flex flex-col">
-                <span className="text-[9px] text-text-muted uppercase font-bold leading-tight">Price</span>
-                <span className="font-bold text-text-primary font-mono">
-                  ₹{priceVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}{" "}
-                  <span className={`text-[10px] font-semibold ${changeVal >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
-                    {changeVal >= 0 ? "+" : ""}{changeVal.toFixed(2)}%
+            {priceVal !== null && (
+              <div className="hidden md:flex items-center gap-5 text-xs whitespace-nowrap border-l border-border-subtle/50 pl-5">
+                <div className="flex flex-col">
+                  <span className="text-[9px] text-text-muted uppercase font-bold leading-tight">Price</span>
+                  <span className="font-bold text-text-primary font-mono">
+                    ₹{priceVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}{" "}
+                    {changeVal !== null && (
+                      <span className={`text-[10px] font-semibold ${changeVal >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
+                        {changeVal >= 0 ? "+" : ""}{changeVal.toFixed(2)}%
+                      </span>
+                    )}
                   </span>
-                </span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[9px] text-text-muted uppercase font-bold leading-tight">Mkt Cap</span>
+                  <span className="font-semibold text-text-muted font-mono">{mktCapVal}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[9px] text-text-muted uppercase font-bold leading-tight">P/E (TTM)</span>
+                  <span className="font-semibold text-text-muted font-mono">{peRatioVal !== null ? `${peRatioVal.toFixed(1)}x` : "—"}</span>
+                </div>
               </div>
-              <div className="flex flex-col">
-                <span className="text-[9px] text-text-muted uppercase font-bold leading-tight">Mkt Cap</span>
-                <span className="font-semibold text-text-muted font-mono">{mktCapVal}</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[9px] text-text-muted uppercase font-bold leading-tight">P/E (TTM)</span>
-                <span className="font-semibold text-text-muted font-mono">{peRatioVal ? peRatioVal.toFixed(1) : "N/A"}x</span>
-              </div>
-            </div>
+            )}
           </div>
         ) : pathname.startsWith("/portfolio-intelligence") ? (
           <div className="flex items-center gap-4">

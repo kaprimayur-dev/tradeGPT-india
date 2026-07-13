@@ -7,12 +7,19 @@ from dotenv import load_dotenv
 
 # Ensure the backend directory is in the python path for importing modules properly
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
+BACKEND_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
 
 # Load configuration environment variables from .env
-load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+env_repo = os.path.join(BACKEND_DIR, "..", ".env")
+env_backend = os.path.join(BACKEND_DIR, ".env")
+if os.path.exists(env_repo):
+    load_dotenv(env_repo)
+elif os.path.exists(env_backend):
+    load_dotenv(env_backend)
+else:
+    load_dotenv()
 
 import google.generativeai as genai
 import yfinance as yf
@@ -21,7 +28,7 @@ import math
 from langchain_community.vectorstores import Chroma
 
 # Import existing RAG query and retrieval methods
-from backend.rag.query import (
+from rag.query import (
     load_vector_store,
     retrieve_relevant_chunks,
     extract_sources,
@@ -33,9 +40,11 @@ from backend.rag.query import (
 
 # Configure Google Generative AI
 API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    raise ValueError("GEMINI_API_KEY environment variable not found. Please set it in your .env file.")
-genai.configure(api_key=API_KEY)
+if API_KEY:
+    genai.configure(api_key=API_KEY)
+else:
+    logger = logging.getLogger("RealtimeIntelligence")
+    logger.warning("GEMINI_API_KEY environment variable not found. Realtime Intelligence AI functions will be disabled.")
 
 # --- National Stock Exchange Ticker Mapping ---
 TICKER_MAPPING = {
@@ -106,7 +115,7 @@ def setup_logging() -> logging.Logger:
         logger.addHandler(stream_handler)
         
         # File output (saved inside backend folder)
-        log_file_path = os.path.join(PROJECT_ROOT, "backend", "realtime_intelligence.log")
+        log_file_path = os.path.join(BACKEND_DIR, "realtime_intelligence.log")
         file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
         file_handler.setFormatter(logging.Formatter(log_format))
         logger.addHandler(file_handler)

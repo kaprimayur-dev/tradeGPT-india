@@ -5,7 +5,30 @@ import { api, MarketDataResponse } from "../api";
 import { createChart, CandlestickSeries, HistogramSeries, CrosshairMode, IChartApi, ISeriesApi, LineStyle } from "lightweight-charts";
 import type { CandlestickData, HistogramData, Time, MouseEventParams } from "lightweight-charts";
 
+const getMarketStatus = () => {
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  const istOffset = 5.5 * 3600000;
+  const istTime = new Date(utc + istOffset);
+  
+  const day = istTime.getDay();
+  const hours = istTime.getHours();
+  const minutes = istTime.getMinutes();
+  const timeValue = hours * 100 + minutes;
+  
+  const isWeekend = day === 0 || day === 6;
+  const isMarketHours = timeValue >= 915 && timeValue <= 1530;
+  
+  if (isWeekend) {
+    return { open: false, label: "Market Closed (Weekend)" };
+  } else if (!isMarketHours) {
+    return { open: false, label: "Market Closed (Opens 9:15 AM IST)" };
+  }
+  return { open: true, label: "Market Live" };
+};
+
 export default function MarketIntelligencePage() {
+  const marketStatus = getMarketStatus();
   const [selectedInterval, setSelectedInterval] = useState("15M");
   const [niftyPrice, setNiftyPrice] = useState(24013.10);
   const [priceChange, setPriceChange] = useState(-0.64);
@@ -20,7 +43,7 @@ export default function MarketIntelligencePage() {
   const [orderSubmitted, setOrderSubmitted] = useState<string | null>(null);
   const [showFullscreenHint, setShowFullscreenHint] = useState(false);
   
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [marketData, setMarketData] = useState<MarketDataResponse | null>(null);
   const [usdinrPrice, setUsdinrPrice] = useState(83.50);
@@ -56,6 +79,33 @@ export default function MarketIntelligencePage() {
       if (savedHealth) {
         setPortfolioHealth(parseInt(savedHealth, 10));
       }
+
+      // Pre-hydrate market data from localStorage cache if present
+      const cache = localStorage.getItem("tradeGPT_market_data_cache");
+      if (cache) {
+        try {
+          const parsed = JSON.parse(cache);
+          if (parsed && parsed.success) {
+            setMarketData(parsed);
+            if (parsed.indices) {
+              if (parsed.indices["NIFTY"]) {
+                setNiftyPrice(parsed.indices["NIFTY"].price);
+                setPriceChange(parsed.indices["NIFTY"].change);
+              }
+              if (parsed.indices["SENSEX"]) {
+                setSensexPrice(parsed.indices["SENSEX"].price);
+                setSensexChange(parsed.indices["SENSEX"].change);
+              }
+              if (parsed.indices["USDINR"]) {
+                setUsdinrPrice(parsed.indices["USDINR"].price);
+                setUsdinrChange(parsed.indices["USDINR"].change);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("Failed to parse market cache on mount:", e);
+        }
+      }
     }
   }, []);
 
@@ -73,33 +123,40 @@ export default function MarketIntelligencePage() {
   };
 
   const loadData = async (timeframe: string = selectedInterval, silent: boolean = false) => {
-    if (!silent) setLoading(true);
+    // If we have cached/loaded data, run silently in background
+    const isSilent = silent || !!marketData;
+    if (!isSilent) setLoading(true);
     setError(null);
     const startTime = Date.now();
     try {
       const mapping = timeframeMapping[timeframe] || { interval: "1d", period: "30d" };
       const data = await api.getMarketData(mapping.interval, mapping.period);
-      setMarketData(data);
-      if (data.indices) {
-        if (data.indices["NIFTY"]) {
-          setNiftyPrice(data.indices["NIFTY"].price);
-          setPriceChange(data.indices["NIFTY"].change);
+      if (data.success) {
+        setMarketData(data);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("tradeGPT_market_data_cache", JSON.stringify(data));
         }
-        if (data.indices["SENSEX"]) {
-          setSensexPrice(data.indices["SENSEX"].price);
-          setSensexChange(data.indices["SENSEX"].change);
-        }
-        if (data.indices["USDINR"]) {
-          setUsdinrPrice(data.indices["USDINR"].price);
-          setUsdinrChange(data.indices["USDINR"].change);
+        if (data.indices) {
+          if (data.indices["NIFTY"]) {
+            setNiftyPrice(data.indices["NIFTY"].price);
+            setPriceChange(data.indices["NIFTY"].change);
+          }
+          if (data.indices["SENSEX"]) {
+            setSensexPrice(data.indices["SENSEX"].price);
+            setSensexChange(data.indices["SENSEX"].change);
+          }
+          if (data.indices["USDINR"]) {
+            setUsdinrPrice(data.indices["USDINR"].price);
+            setUsdinrChange(data.indices["USDINR"].change);
+          }
         }
       }
       setLatency(Date.now() - startTime);
     } catch (err: unknown) {
       const e = err as Error;
-      if (!silent) setError(e.message || "Failed to load live market data");
+      if (!isSilent) setError(e.message || "Failed to load live market data");
     } finally {
-      if (!silent) setLoading(false);
+      if (!isSilent) setLoading(false);
     }
   };
 
@@ -123,7 +180,7 @@ export default function MarketIntelligencePage() {
 
   // Simulate real-time price tick changes once price is loaded
   useEffect(() => {
-    if (loading || error) return;
+    if (loading || error || !marketStatus.open) return;
     const interval = setInterval(() => {
       const niftyDelta = (Math.random() - 0.48) * 4;
       setNiftyPrice((prev) => parseFloat((prev + niftyDelta).toFixed(2)));
@@ -134,7 +191,7 @@ export default function MarketIntelligencePage() {
       setSensexChange((prev) => parseFloat((prev + (sensexDelta / 76800) * 100).toFixed(4)));
     }, 3000);
     return () => clearInterval(interval);
-  }, [loading, error]);
+  }, [loading, error, marketStatus.open]);
 
   // Update last candle in lightweight-charts when simulated ticks happen
   useEffect(() => {
@@ -411,27 +468,6 @@ export default function MarketIntelligencePage() {
 
   const lastVolume = lastCandle && lastCandle.volume ? (lastCandle.volume / 1000000).toFixed(2) + "M" : "—";
 
-  const getMarketStatus = () => {
-    const now = new Date();
-    const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-    const istOffset = 5.5 * 3600000;
-    const istTime = new Date(utc + istOffset);
-    
-    const day = istTime.getDay();
-    const hours = istTime.getHours();
-    const minutes = istTime.getMinutes();
-    const timeValue = hours * 100 + minutes;
-    
-    const isWeekend = day === 0 || day === 6;
-    const isMarketHours = timeValue >= 915 && timeValue <= 1530;
-    
-    if (isWeekend) {
-      return { open: false, label: "Market Closed (Weekend)" };
-    } else if (!isMarketHours) {
-      return { open: false, label: "Market Closed (Opens 9:15 AM IST)" };
-    }
-    return { open: true, label: "Market Live" };
-  };
 
   const formatRelativeTime = (dateStr: string) => {
     if (!dateStr || dateStr === "N/A") return "—";
@@ -461,21 +497,10 @@ export default function MarketIntelligencePage() {
     }
   };
 
-  const marketStatus = getMarketStatus();
 
   const currentIndexPrice = selectedIndex === "NIFTY" ? niftyPrice : sensexPrice;
   const currentIndexChange = selectedIndex === "NIFTY" ? priceChange : sensexChange;
 
-  if (loading) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-[#faf8ff] h-full font-body">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-4 border-[#004ac6] border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-xs font-semibold text-[#434655] uppercase tracking-wider animate-pulse">Loading Live Market Terminal...</p>
-        </div>
-      </div>
-    );
-  }
 
   if (error) {
     return (
@@ -612,10 +637,20 @@ export default function MarketIntelligencePage() {
             </div>
           </div>
 
-          {/* Chart Content Area */}
           <div className="flex-1 relative overflow-hidden flex flex-col min-h-0">
             {/* Chart Container for Lightweight Charts */}
             <div ref={chartContainerRef} className="w-full h-full flex-1 relative min-h-0" />
+            
+            {!marketData && (
+              <div className="absolute inset-0 bg-white z-20 p-6 flex flex-col justify-between pointer-events-none select-none">
+                <div className="flex-1 border-b border-l border-slate-200/80 relative bg-slate-50/30 rounded p-4 flex flex-col justify-between animate-pulse">
+                  <div className="w-full h-[1px] bg-slate-100"></div>
+                  <div className="w-full h-[1px] bg-slate-100"></div>
+                  <div className="w-full h-[1px] bg-slate-100"></div>
+                  <div className="w-full h-[1px] bg-slate-100"></div>
+                </div>
+              </div>
+            )}
             
             {/* Floating Live Data Tooltip */}
             {(() => {
@@ -670,48 +705,72 @@ export default function MarketIntelligencePage() {
           <div className="p-4 border-b border-[#c3c6d7]">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-[11px] font-bold text-[#191b23] uppercase tracking-wider">Market Breadth</h3>
-              <span className="text-[10px] text-[#10b981] font-bold font-mono">
-                {marketData?.breadth.advancing || 0} ADV / {marketData?.breadth.declining || 0} DEC
-              </span>
+              {marketData ? (
+                <span className="text-[10px] text-[#10b981] font-bold font-mono">
+                  {marketData.breadth.advancing || 0} ADV / {marketData.breadth.declining || 0} DEC
+                </span>
+              ) : (
+                <div className="w-20 h-3.5 bg-slate-100 rounded animate-pulse"></div>
+              )}
             </div>
-            <div className="grid grid-cols-5 gap-1">
-              {Array.from({ length: 10 }).map((_, idx) => {
-                const adv = marketData?.breadth.advancing || 0;
-                const dec = marketData?.breadth.declining || 0;
-                const total = adv + dec;
-                const ratio = total > 0 ? adv / total : 0.5;
-                const isGreen = idx < Math.round(ratio * 10);
-                return (
-                  <div
-                    key={idx}
-                    className={`aspect-square rounded-sm hover:opacity-90 transition-opacity ${
-                      isGreen ? "bg-[#10b981]" : "bg-[#ba1a1a]"
-                    }`}
-                  ></div>
-                );
-              })}
-            </div>
+            {!marketData ? (
+              <div className="grid grid-cols-5 gap-1 animate-pulse">
+                {Array.from({ length: 10 }).map((_, idx) => (
+                  <div key={idx} className="aspect-square rounded-sm bg-slate-200/60"></div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-5 gap-1">
+                {Array.from({ length: 10 }).map((_, idx) => {
+                  const adv = marketData.breadth.advancing || 0;
+                  const dec = marketData.breadth.declining || 0;
+                  const total = adv + dec;
+                  const ratio = total > 0 ? adv / total : 0.5;
+                  const isGreen = idx < Math.round(ratio * 10);
+                  return (
+                    <div
+                      key={idx}
+                      className={`aspect-square rounded-sm hover:opacity-90 transition-opacity ${
+                        isGreen ? "bg-[#10b981]" : "bg-[#ba1a1a]"
+                      }`}
+                    ></div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Sector Performance */}
           <div className="p-4 border-b border-[#c3c6d7]">
             <h3 className="text-[11px] font-bold text-[#191b23] uppercase tracking-wider mb-3">Sector Performance</h3>
-            <div className="space-y-3 max-h-[160px] overflow-y-auto custom-scrollbar pr-1">
-              {(marketData?.sectors || []).map((sec, idx) => (
-                <div key={idx} className="flex items-center gap-3">
-                  <span className="text-xs font-semibold text-[#434655] flex-1 truncate uppercase">{sec.name}</span>
-                  <div className="w-20 h-1.5 bg-[#e7e7f3] rounded-full overflow-hidden shrink-0">
-                    <div 
-                      className={`h-full ${sec.change >= 0 ? "bg-[#10b981]" : "bg-[#ba1a1a]"}`} 
-                      style={{ width: `${Math.min(100, Math.max(15, Math.abs(sec.change) * 20))}%` }}
-                    ></div>
+            {!marketData ? (
+              <div className="space-y-3.5 animate-pulse">
+                {Array.from({ length: 6 }).map((_, idx) => (
+                  <div key={idx} className="flex items-center gap-3">
+                    <div className="h-3 bg-slate-200/70 rounded w-24"></div>
+                    <div className="flex-1 h-2 bg-slate-100/80 rounded"></div>
+                    <div className="h-3 bg-slate-200/70 rounded w-8"></div>
                   </div>
-                  <span className={`text-[10px] font-mono font-bold w-10 text-right shrink-0 ${sec.change >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
-                    {sec.change >= 0 ? "+" : ""}{sec.change.toFixed(2)}%
-                  </span>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-[160px] overflow-y-auto custom-scrollbar pr-1">
+                {marketData.sectors.map((sec, idx) => (
+                  <div key={idx} className="flex items-center gap-3">
+                    <span className="text-xs font-semibold text-[#434655] flex-1 truncate uppercase">{sec.name}</span>
+                    <div className="w-20 h-1.5 bg-[#e7e7f3] rounded-full overflow-hidden shrink-0">
+                      <div 
+                        className={`h-full ${sec.change >= 0 ? "bg-[#10b981]" : "bg-[#ba1a1a]"}`} 
+                        style={{ width: `${Math.min(100, Math.max(15, Math.abs(sec.change) * 20))}%` }}
+                      ></div>
+                    </div>
+                    <span className={`text-[10px] font-mono font-bold w-10 text-right shrink-0 ${sec.change >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
+                      {sec.change >= 0 ? "+" : ""}{sec.change.toFixed(2)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Live Institutional Wire Feed */}
@@ -726,32 +785,47 @@ export default function MarketIntelligencePage() {
               </div>
             </div>
             
-            <div className="flex-1 overflow-y-auto custom-scrollbar divide-y divide-[#e7e7f3]">
-              {(marketData?.news || []).map((item, idx) => (
-                <a 
-                  key={idx}
-                  href={item.link && item.link !== "N/A" ? item.link : undefined}
-                  target={item.link && item.link !== "N/A" ? "_blank" : undefined}
-                  rel="noopener noreferrer"
-                  className={`p-3.5 hover:bg-[#faf8ff] transition-all block border-b border-[#e7e7f3] group ${
-                    item.link && item.link !== "N/A" ? "cursor-pointer" : "cursor-default opacity-80"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[9px] font-bold text-[#004ac6] tracking-wider font-mono uppercase">{item.publisher}</span>
-                    <span className="text-[9px] text-[#737686] font-mono font-medium truncate max-w-[120px]" title={item.date}>
-                      {formatRelativeTime(item.date)}
-                    </span>
+            {!marketData ? (
+              <div className="flex-1 overflow-y-auto divide-y divide-[#e7e7f3] animate-pulse">
+                {Array.from({ length: 4 }).map((_, idx) => (
+                  <div key={idx} className="p-3.5 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <div className="h-3 bg-slate-200/70 rounded w-16"></div>
+                      <div className="h-3 bg-slate-100/80 rounded w-12"></div>
+                    </div>
+                    <div className="h-4 bg-slate-300/60 rounded w-full"></div>
+                    <div className="h-3 bg-slate-200/70 rounded w-2/3"></div>
                   </div>
-                  <p className="text-[13px] leading-snug text-[#191b23] font-bold group-hover:text-[#004ac6] transition-colors">
-                    {item.title}
-                  </p>
-                  <p className="text-[10px] leading-relaxed text-[#737686] mt-1 line-clamp-2">
-                    {item.summary}
-                  </p>
-                </a>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto custom-scrollbar divide-y divide-[#e7e7f3]">
+                {marketData.news.map((item, idx) => (
+                  <a 
+                    key={idx}
+                    href={item.link && item.link !== "N/A" ? item.link : undefined}
+                    target={item.link && item.link !== "N/A" ? "_blank" : undefined}
+                    rel="noopener noreferrer"
+                    className={`p-3.5 hover:bg-[#faf8ff] transition-all block border-b border-[#e7e7f3] group ${
+                      item.link && item.link !== "N/A" ? "cursor-pointer" : "cursor-default opacity-80"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[9px] font-bold text-[#004ac6] tracking-wider font-mono uppercase">{item.publisher}</span>
+                      <span className="text-[9px] text-[#737686] font-mono font-medium truncate max-w-[120px]" title={item.date}>
+                        {formatRelativeTime(item.date)}
+                      </span>
+                    </div>
+                    <p className="text-[13px] leading-snug text-[#191b23] font-bold group-hover:text-[#004ac6] transition-colors">
+                      {item.title}
+                    </p>
+                    <p className="text-[10px] leading-relaxed text-[#737686] mt-1 line-clamp-2">
+                      {item.summary}
+                    </p>
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
         </aside>
       </div>

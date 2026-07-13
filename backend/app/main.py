@@ -1,27 +1,33 @@
 import os
 import sys
 import logging
+import threading
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-# Ensure the backend directory is in the python path for importing modules properly
+# Ensure the backend directory path is resolved for loading env/logs correctly
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
+BACKEND_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 
 # Load configuration environment variables from .env
-load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+env_repo = os.path.join(BACKEND_DIR, "..", ".env")
+env_backend = os.path.join(BACKEND_DIR, ".env")
+if os.path.exists(env_repo):
+    load_dotenv(env_repo)
+elif os.path.exists(env_backend):
+    load_dotenv(env_backend)
+else:
+    load_dotenv()
 
-from backend.rag.query import (
+from rag.query import (
     load_vector_store,
     CHROMA_DB_DIR,
     CHROMA_COLLECTION_NAME,
     EMBEDDING_MODEL_NAME
 )
-from backend.app.routes import (
+from app.routes import (
     health_router,
     analyze_router,
     research_router,
@@ -40,7 +46,11 @@ def setup_app_logging() -> logging.Logger:
         stream_handler.setFormatter(logging.Formatter(log_format))
         logger.addHandler(stream_handler)
         
-        log_file_path = os.path.join(PROJECT_ROOT, "backend", "master_copilot.log")
+        log_file_path = os.path.join(BACKEND_DIR, "master_copilot.log")
+        log_dir = os.path.dirname(log_file_path)
+        if log_dir and not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+            
         file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
         file_handler.setFormatter(logging.Formatter(log_format))
         logger.addHandler(file_handler)
@@ -50,21 +60,32 @@ def setup_app_logging() -> logging.Logger:
 logger = setup_app_logging()
 
 # Import monkey patch from master_copilot to ensure rate-limit resilience for all Gemini calls
-from backend.features.master_copilot import setup_monkey_patch
+from features.master_copilot import setup_monkey_patch
 setup_monkey_patch(logger)
+
+_db_cache = None
+_db_lock = threading.Lock()
+
+def get_vector_store():
+    """Lazy initializer for vector store DB. Thread-safe."""
+    global _db_cache
+    if _db_cache is None:
+        with _db_lock:
+            if _db_cache is None:
+                logger.info("Lazy initializing ChromaDB vector store...")
+                try:
+                    db = load_vector_store(CHROMA_DB_DIR, CHROMA_COLLECTION_NAME, EMBEDDING_MODEL_NAME, logger)
+                    _db_cache = db
+                    logger.info("ChromaDB vector store lazy loading completed.")
+                except Exception as e:
+                    logger.critical(f"Failed to lazy load vector store: {str(e)}", exc_info=True)
+                    _db_cache = None
+    return _db_cache
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup lifecycle
-    logger.info("Initializing vector store ChromaDB startup lifespan...")
-    try:
-        db = load_vector_store(CHROMA_DB_DIR, CHROMA_COLLECTION_NAME, EMBEDDING_MODEL_NAME, logger)
-        app.state.db = db
-        logger.info("Vector database loaded successfully during app startup.")
-    except Exception as e:
-        logger.critical(f"Failed to load vector store on startup: {str(e)}", exc_info=True)
-        # We don't crash startup, but log it; the endpoints will return 503 if db is None
-    
+    # Startup lifecycle - does NOT block on ChromaDB/embeddings initialization
+    logger.info("FastAPI TradeGPT startup sequence complete. Vector store will be initialized lazily.")
     yield
     
     # Shutdown lifecycle

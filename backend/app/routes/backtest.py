@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request, HTTPException, status
-from backend.app.schemas.backtest import BacktestRequest, BacktestResponse
-from backend.app.schemas.portfolio import ErrorResponse
-from backend.app.services.backtest_service import BacktestService
+from app.schemas.backtest import BacktestRequest, BacktestResponse
+from app.schemas.portfolio import ErrorResponse
+from app.services.backtest_service import BacktestService
 
 router = APIRouter()
 

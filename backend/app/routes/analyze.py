@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException, status
-from backend.app.schemas.portfolio import PortfolioRequest, PortfolioResponse, ErrorResponse
-from backend.app.services.portfolio_service import PortfolioService
+from app.schemas.portfolio import PortfolioRequest, PortfolioResponse, ErrorResponse
+from app.services.portfolio_service import PortfolioService
 
 router = APIRouter()
 
@@ -15,12 +15,15 @@ def analyze_portfolio(payload: PortfolioRequest, request: Request):
     and returns the unified report.
     """
     # Retrieve ChromaDB instance initialized in application startup lifespan
-    db = getattr(request.app.state, "db", None)
-    if db is None:
+    import os
+    if not os.getenv("GEMINI_API_KEY"):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Vector database is not initialized on startup."
+            detail="AI service temporarily unavailable (GEMINI_API_KEY missing)."
         )
+
+    from app.main import get_vector_store
+    db = get_vector_store()
         
     if not payload.portfolio.strip():
         raise HTTPException(

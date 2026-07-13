@@ -1,6 +1,6 @@
 import logging
 from langchain_community.vectorstores import Chroma
-from backend.features.stock_analyzer import generate_structured_research
+from features.stock_analyzer import generate_structured_research
 
 logger = logging.getLogger("ResearchService")
 

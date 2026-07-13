@@ -11,18 +11,25 @@ from dotenv import load_dotenv
 
 # Ensure the backend directory is in the python path for importing modules properly
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
+BACKEND_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
 
 # Load configuration environment variables from .env
-load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+env_repo = os.path.join(BACKEND_DIR, "..", ".env")
+env_backend = os.path.join(BACKEND_DIR, ".env")
+if os.path.exists(env_repo):
+    load_dotenv(env_repo)
+elif os.path.exists(env_backend):
+    load_dotenv(env_backend)
+else:
+    load_dotenv()
 
 import google.generativeai as genai
 from google.api_core import exceptions
 import time
 import random
-from backend.rag.query import GEMINI_MODEL_NAME
+from rag.query import GEMINI_MODEL_NAME
 
 # --- Monkey Patching Gemini SDK for Automatic Rate Limit Retries ---
 def setup_monkey_patch():
@@ -61,9 +68,11 @@ setup_monkey_patch()
 
 # Configure Google Generative AI
 API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    raise ValueError("GEMINI_API_KEY environment variable not found. Please set it in your .env file.")
-genai.configure(api_key=API_KEY)
+if API_KEY:
+    genai.configure(api_key=API_KEY)
+else:
+    logger = logging.getLogger("BacktestingEngine")
+    logger.warning("GEMINI_API_KEY environment variable not found. Backtesting Engine AI report summary will be disabled.")
 
 # --- National Stock Exchange Ticker Mapping ---
 TICKER_MAPPING = {
@@ -160,7 +169,7 @@ def setup_logging() -> logging.Logger:
         stream_handler.setFormatter(logging.Formatter(log_format))
         logger.addHandler(stream_handler)
         
-        log_file_path = os.path.join(PROJECT_ROOT, "backend", "backtesting_engine.log")
+        log_file_path = os.path.join(BACKEND_DIR, "backtesting_engine.log")
         file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
         file_handler.setFormatter(logging.Formatter(log_format))
         logger.addHandler(file_handler)

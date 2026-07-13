@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request, HTTPException, status
-from backend.app.schemas.research import ResearchRequest, ResearchResponse
-from backend.app.schemas.portfolio import ErrorResponse
-from backend.app.services.research_service import ResearchService
+from app.schemas.research import ResearchRequest, ResearchResponse
+from app.schemas.portfolio import ErrorResponse
+from app.services.research_service import ResearchService
 
 router = APIRouter()
 
@@ -15,11 +15,19 @@ def research_stock(payload: ResearchRequest, request: Request):
     """Retrieves corporate disclosures from ChromaDB and live metrics from yfinance
     to return a structured research report for the target stock.
     """
-    db = getattr(request.app.state, "db", None)
+    import os
+    if not os.getenv("GEMINI_API_KEY"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service temporarily unavailable (GEMINI_API_KEY missing)."
+        )
+
+    from app.main import get_vector_store
+    db = get_vector_store()
     if db is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Vector database is not initialized on startup."
+            detail="Vector database is temporarily unavailable."
         )
         
     if not payload.symbol.strip():

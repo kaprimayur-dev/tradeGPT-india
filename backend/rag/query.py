@@ -1,17 +1,25 @@
 import os
 import sys
 import logging
+import threading
 from typing import List, Tuple, Dict, Any
 from dotenv import load_dotenv
 
 # Ensure the backend directory is in the python path for importing modules properly
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
+BACKEND_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
 
 # Load configuration environment variables from .env
-load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+env_repo = os.path.join(BACKEND_DIR, "..", ".env")
+env_backend = os.path.join(BACKEND_DIR, ".env")
+if os.path.exists(env_repo):
+    load_dotenv(env_repo)
+elif os.path.exists(env_backend):
+    load_dotenv(env_backend)
+else:
+    load_dotenv()
 
 import google.generativeai as genai
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -19,16 +27,18 @@ from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
 
 # --- Configuration Constants ---
-CHROMA_DB_DIR = os.getenv("RAG_CHROMA_DB_DIR", os.path.join(PROJECT_ROOT, "backend", "chromadb_store"))
+CHROMA_DB_DIR = os.getenv("RAG_CHROMA_DB_DIR", os.path.join(BACKEND_DIR, "chromadb_store"))
 EMBEDDING_MODEL_NAME = os.getenv("RAG_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 CHROMA_COLLECTION_NAME = os.getenv("RAG_COLLECTION_NAME", "trade_gpt_reports")
 GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 # Configure Google Generative AI
 API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    raise ValueError("GEMINI_API_KEY environment variable not found. Please set it in your .env file.")
-genai.configure(api_key=API_KEY)
+if API_KEY:
+    genai.configure(api_key=API_KEY)
+else:
+    logger = logging.getLogger("RAGQuery")
+    logger.warning("GEMINI_API_KEY environment variable not found. RAG Query AI functions will be disabled.")
 
 # --- Grounded Retrieval Prompt ---
 PROMPT_TEMPLATE = """You are TradeGPT India, a Financial Intelligence Copilot for Indian retail investors. 
@@ -63,13 +73,16 @@ def setup_logging() -> logging.Logger:
         logger.addHandler(stream_handler)
         
         # File output (saved inside backend folder)
-        log_file_path = os.path.join(PROJECT_ROOT, "backend", "rag_query.log")
+        log_file_path = os.path.join(BACKEND_DIR, "rag_query.log")
         file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
         file_handler.setFormatter(logging.Formatter(log_format))
         logger.addHandler(file_handler)
         
     return logger
 
+
+_embeddings_cache = None
+_embeddings_lock = threading.Lock()
 
 def load_vector_store(
     db_dir: str, 
@@ -86,31 +99,43 @@ def load_vector_store(
         logger (logging.Logger): Logger instance.
         
     Returns:
-        Chroma: Loaded Chroma vector store.
+        Chroma: Loaded Chroma vector store, or None if loading failed.
     """
-    logger.info(f"Initializing embedding model: {model_name}")
-    try:
-        embeddings = HuggingFaceEmbeddings(model_name=model_name)
-    except Exception as e:
-        logger.error(f"Failed to load embedding model '{model_name}': {str(e)}", exc_info=True)
-        raise e
-        
+    if os.getenv("FORCE_DB_FAILURE") == "true":
+        logger.critical("FORCED CHROMADB FAILURE FOR TESTING OUTAGE RESILIENCY!")
+        return None
+
+    global _embeddings_cache
+    if _embeddings_cache is None:
+        with _embeddings_lock:
+            if _embeddings_cache is None:
+                logger.info(f"Lazy initializing embedding model: {model_name}")
+                try:
+                    _embeddings_cache = HuggingFaceEmbeddings(model_name=model_name)
+                except Exception as e:
+                    logger.critical(f"Failed to load embedding model '{model_name}': {str(e)}", exc_info=True)
+                    return None
+                    
     logger.info(f"Loading ChromaDB database from: {db_dir}")
     if not os.path.exists(db_dir):
-        logger.error(f"ChromaDB directory '{db_dir}' not found. Please run data ingestion first.")
-        raise FileNotFoundError(f"ChromaDB store not found at {db_dir}")
+        logger.warning(f"ChromaDB directory '{db_dir}' not found. Automatically creating empty directory.")
+        try:
+            os.makedirs(db_dir, exist_ok=True)
+        except Exception as e:
+            logger.critical(f"Failed to create ChromaDB directory: {str(e)}", exc_info=True)
+            return None
         
     try:
         db = Chroma(
             persist_directory=db_dir,
-            embedding_function=embeddings,
+            embedding_function=_embeddings_cache,
             collection_name=collection_name
         )
         logger.info("ChromaDB vector store loaded successfully.")
         return db
     except Exception as e:
-        logger.error(f"Failed to load ChromaDB vector store: {str(e)}", exc_info=True)
-        raise e
+        logger.critical(f"Failed to load ChromaDB vector store: {str(e)}", exc_info=True)
+        return None
 
 
 def retrieve_relevant_chunks(
@@ -131,6 +156,9 @@ def retrieve_relevant_chunks(
         List[Tuple[Document, float]]: List of retrieved documents with their distance scores.
     """
     logger.info(f"Retrieving top {k} relevant chunks for query: '{query}'")
+    if db is None:
+        logger.warning("Vector database is None (unavailable). Skipping semantic retrieval and returning empty results.")
+        return []
     try:
         results = db.similarity_search_with_score(query, k=k)
         logger.info(f"Successfully retrieved {len(results)} chunks from ChromaDB.")

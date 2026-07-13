@@ -8,12 +8,19 @@ from dotenv import load_dotenv
 
 # Ensure the backend directory is in the python path for importing modules properly
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
+BACKEND_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
 
 # Load configuration environment variables from .env
-load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+env_repo = os.path.join(BACKEND_DIR, "..", ".env")
+env_backend = os.path.join(BACKEND_DIR, ".env")
+if os.path.exists(env_repo):
+    load_dotenv(env_repo)
+elif os.path.exists(env_backend):
+    load_dotenv(env_backend)
+else:
+    load_dotenv()
 
 import google.generativeai as genai
 from google.api_core import exceptions
@@ -53,24 +60,25 @@ def setup_monkey_patch(logger: logging.Logger):
     genai.GenerativeModel.generate_content = patched_generate_content
     logger.info("Successfully monkey-patched google.generativeai.GenerativeModel.generate_content for rate-limit resilience.")
 
-# Import sub-modules after monkey-patch setup to ensure it applies universally
-from backend.rag.query import (
+from rag.query import (
     load_vector_store,
     CHROMA_DB_DIR,
     CHROMA_COLLECTION_NAME,
     EMBEDDING_MODEL_NAME,
     GEMINI_MODEL_NAME
 )
-from backend.features.portfolio_doctor import parse_portfolio, diagnose_portfolio_data
-from backend.features.stock_analyzer import generate_stock_report_data
-from backend.features.macro_dependency_analyzer import analyze_macro_dependencies_data
-from backend.features.realtime_intelligence import generate_realtime_intelligence_report_data
+from features.portfolio_doctor import parse_portfolio, diagnose_portfolio_data
+from features.stock_analyzer import generate_stock_report_data
+from features.macro_dependency_analyzer import analyze_macro_dependencies_data
+from features.realtime_intelligence import generate_realtime_intelligence_report_data
 
 # Configure Google Generative AI
 API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    raise ValueError("GEMINI_API_KEY environment variable not found. Please set it in your .env file.")
-genai.configure(api_key=API_KEY)
+if API_KEY:
+    genai.configure(api_key=API_KEY)
+else:
+    logger = logging.getLogger("MasterCopilot")
+    logger.warning("GEMINI_API_KEY environment variable not found. Master Copilot AI functions will be disabled.")
 
 # --- Master Prompt Template ---
 MASTER_PROMPT_TEMPLATE = """You are the TradeGPT India Master Copilot, a supreme financial intelligence orchestrator and investment research advisor for retail investors.
@@ -151,7 +159,7 @@ def setup_logging() -> logging.Logger:
         stream_handler.setFormatter(logging.Formatter(log_format))
         logger.addHandler(stream_handler)
         
-        log_file_path = os.path.join(PROJECT_ROOT, "backend", "master_copilot.log")
+        log_file_path = os.path.join(BACKEND_DIR, "master_copilot.log")
         file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
         file_handler.setFormatter(logging.Formatter(log_format))
         logger.addHandler(file_handler)

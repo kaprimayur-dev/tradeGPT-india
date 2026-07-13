@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
-from backend.app.schemas.market_data import MarketDataResponse
-from backend.app.schemas.portfolio import ErrorResponse
-from backend.app.services.market_data_service import MarketDataService
+from app.schemas.market_data import MarketDataResponse
+from app.schemas.portfolio import ErrorResponse
+from app.services.market_data_service import MarketDataService
 
 router = APIRouter()
 

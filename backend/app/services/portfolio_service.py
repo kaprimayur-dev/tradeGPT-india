@@ -2,7 +2,7 @@ import logging
 import datetime
 from typing import Dict, Any
 from langchain_community.vectorstores import Chroma
-from backend.features.master_copilot import generate_master_report_data
+from features.master_copilot import generate_master_report_data
 
 logger = logging.getLogger("PortfolioService")
 

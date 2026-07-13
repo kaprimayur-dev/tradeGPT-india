@@ -1,5 +1,5 @@
 import logging
-from backend.features.realtime_intelligence import fetch_market_snapshot
+from features.realtime_intelligence import fetch_market_snapshot
 
 logger = logging.getLogger("MarketDataService")
 

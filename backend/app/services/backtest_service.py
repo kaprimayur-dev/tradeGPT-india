@@ -1,5 +1,5 @@
 import logging
-from backend.features.backtesting_engine import run_backtest_simulation
+from features.backtesting_engine import run_backtest_simulation
 
 logger = logging.getLogger("BacktestService")
 

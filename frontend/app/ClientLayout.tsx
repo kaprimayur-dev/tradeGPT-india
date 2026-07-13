@@ -6,6 +6,7 @@ import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import CommandPalette from "@/components/CommandPalette";
 import ShortcutsModal from "@/components/ShortcutsModal";
+import { API_BASE_URL } from "./api";
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -18,10 +19,10 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const [mounted, setMounted] = useState(false);
 
   // Live ticking status states
-  const [latency, setLatency] = useState(14);
+  const [latency, setLatency] = useState<number | null>(null);
   const [countdownStr, setCountdownStr] = useState("");
   const [marketStatus, setMarketStatus] = useState({ open: true, label: "Live" });
-  const [usdinrPrice, setUsdinrPrice] = useState(83.52);
+  const [usdinrPrice, setUsdinrPrice] = useState(83.50);
   const [usdinrChange, setUsdinrChange] = useState(-0.02);
 
   // Footer dynamic values loaded from localStorage
@@ -65,24 +66,39 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     localStorage.setItem("trade_sidebar_collapsed", next ? "true" : "false");
   };
 
-  // Live ticking intervals (latency, countdown, usdinr prices)
+  // Live ping and USDINR rates fetch
+  useEffect(() => {
+    if (!mounted) return;
+
+    const fetchFooterRates = async () => {
+      try {
+        const start = Date.now();
+        const res = await fetch(`${API_BASE_URL}/market-data`);
+        const data = await res.json();
+        setLatency(Date.now() - start);
+        if (data.success && data.indices) {
+          if (data.indices.USDINR) {
+            setUsdinrPrice(data.indices.USDINR.price);
+            setUsdinrChange(data.indices.USDINR.change);
+          }
+        }
+      } catch (e) {
+        console.error("Footer rates fetch failed", e);
+        setLatency(null);
+      }
+    };
+
+    fetchFooterRates();
+    const rateInterval = setInterval(fetchFooterRates, 15000);
+    return () => clearInterval(rateInterval);
+  }, [mounted]);
+
+  // Live ticking countdown and watchlists/health count reload
   useEffect(() => {
     if (!mounted) return;
 
     const timer = setInterval(() => {
-      // 1. Latency fluctuation
-      setLatency((prev) => {
-        const delta = Math.floor((Math.random() - 0.5) * 6);
-        return Math.max(8, Math.min(85, prev + delta));
-      });
-
-      // 2. USDINR price fluctuation
-      setUsdinrPrice((prev) => {
-        const delta = (Math.random() - 0.5) * 0.02;
-        return parseFloat((prev + delta).toFixed(4));
-      });
-
-      // 3. IST Market countdown
+      // 1. IST Market countdown
       const now = new Date();
       const utc = now.getTime() + now.getTimezoneOffset() * 60000;
       const istOffset = 5.5 * 3600000;
@@ -121,7 +137,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         }
       }
 
-      // 4. Reload watchlists values dynamically
+      // 2. Reload watchlists values dynamically
       const savedWatchlist = localStorage.getItem("trade_watchlist");
       if (savedWatchlist) {
         try {
@@ -244,10 +260,6 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
           <div className="flex items-center gap-6 overflow-hidden text-xs">
             <div className="flex items-center gap-2">
-              <span className="text-[9px] text-text-muted font-bold uppercase tracking-wider">Margin</span>
-              <span className="font-bold text-text-primary">₹8.4L Available</span>
-            </div>
-            <div className="flex items-center gap-2">
               <span className="text-[9px] text-text-muted font-bold uppercase tracking-wider">Open Positions</span>
               <span className="font-bold text-text-primary">{openPositionsCount} Active</span>
             </div>
@@ -266,7 +278,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
               <div className="w-1.5 h-1.5 rounded-full bg-[#10b981]"></div>
               <span className="font-semibold text-text-muted">Mum-1</span>
             </div>
-            <span className="font-semibold text-text-muted">Latency: {latency}ms</span>
+            <span className="font-semibold text-text-muted">Latency: {latency !== null ? `${latency}ms` : "—"}</span>
           </div>
         </footer>
       </div>
