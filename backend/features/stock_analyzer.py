@@ -3,6 +3,7 @@ import sys
 import logging
 import threading
 import time
+import pandas as pd
 from dotenv import load_dotenv
 
 # Ensure the backend directory is in the python path for importing modules properly
