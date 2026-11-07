@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import time
 from dotenv import load_dotenv
 
 # Ensure the backend directory is in the python path for importing modules properly
@@ -157,10 +158,11 @@ def analyze_macro_dependencies_data(company_name: str, db: Chroma, logger: loggi
     prompt = MACRO_PROMPT_TEMPLATE.format(context=context_str, company_name=company_name)
     
     # Invoke Gemini LLM
-    logger.info(f"Sending prompt to Gemini model: {GEMINI_MODEL_NAME}")
+    logger.info(f"START: Gemini generation for Macro Dependency ({company_name})")
+    start_g = time.time()
     model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-    response = model.generate_content(prompt)
-    logger.info("Successfully received analysis report from Gemini.")
+    response = model.generate_content(prompt, request_options={"timeout": 15})
+    logger.info(f"END: Gemini generation for Macro Dependency ({company_name}) ({time.time() - start_g:.2f} sec)")
     
     # Extract sources
     sources = extract_sources(retrieved_results)

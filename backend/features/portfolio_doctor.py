@@ -2,6 +2,7 @@ import os
 import sys
 import logging
 import re
+import time
 from typing import Dict, Any, List, Tuple
 from dotenv import load_dotenv
 
@@ -331,10 +332,11 @@ def diagnose_portfolio_data(portfolio_str: str, db: Chroma, logger: logging.Logg
     )
     
     # 7. Invoke Gemini LLM for diagnostic analysis
-    logger.info(f"Sending prompt to Gemini model: {GEMINI_MODEL_NAME}")
+    logger.info("START: Gemini generation for portfolio report")
+    start_g = time.time()
     model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-    response = model.generate_content(prompt)
-    logger.info("Successfully received diagnostic report from Gemini.")
+    response = model.generate_content(prompt, request_options={"timeout": 15})
+    logger.info(f"END: Gemini generation for portfolio report ({time.time() - start_g:.2f} sec)")
     
     return {
         "report": response.text.strip(),

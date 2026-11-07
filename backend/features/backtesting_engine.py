@@ -548,8 +548,26 @@ def run_backtest_simulation(
     logger.info(f"Resolved company name '{company_name}' to ticker: '{ticker_symbol}'")
     
     try:
-        ticker = yf.Ticker(ticker_symbol)
-        df = ticker.history(period=period)
+        import requests
+        class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
+            def __init__(self, *args, **kwargs):
+                self.timeout = kwargs.pop("timeout", 15)
+                super().__init__(*args, **kwargs)
+            def send(self, request, **kwargs):
+                kwargs["timeout"] = kwargs.get("timeout") or self.timeout
+                return super().send(request, **kwargs)
+                
+        session = requests.Session()
+        adapter = TimeoutHTTPAdapter(timeout=15)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        
+        logger.info(f"START: Yahoo download for {ticker_symbol} (period={period})")
+        start_y = time.time()
+        ticker = yf.Ticker(ticker_symbol, session=session)
+        df = ticker.history(period=period, timeout=15)
+        logger.info(f"END: Yahoo download for {ticker_symbol} (period={period}) ({time.time() - start_y:.2f} sec)")
+        
         if not df.empty:
             df = df.dropna(subset=["Close"])
         if df.empty or len(df) < 14:
@@ -562,13 +580,14 @@ def run_backtest_simulation(
     df["SMA_50"] = calculate_sma(df["Close"], 50)
     df["SMA_200"] = calculate_sma(df["Close"], 200)
     
-    if strategy_name in ["Buy & Hold", "Buy and Hold", "buy_and_hold"]:
+    strategy_key = strategy_name.lower().strip()
+    if strategy_key in ["buy & hold", "buy and hold", "buy_and_hold"]:
         portfolio_series, trades = run_buy_and_hold_backtest(df, initial_capital)
         strategy_name_display = "Buy & Hold"
-    elif strategy_name == "RSI":
+    elif strategy_key in ["rsi", "mean reversion", "mean_reversion"]:
         portfolio_series, trades = run_rsi_backtest(df, initial_capital)
-        strategy_name_display = "RSI"
-    elif strategy_name in ["SMA Crossover", "SMA"]:
+        strategy_name_display = "Mean Reversion (RSI)"
+    elif strategy_key in ["sma crossover", "sma", "sma_crossover"]:
         portfolio_series, trades = run_sma_backtest(df, initial_capital)
         strategy_name_display = "SMA Crossover"
     else:
@@ -611,9 +630,12 @@ def run_backtest_simulation(
     )
     
     report_text = ""
+    logger.info(f"START: Gemini generation for backtest report ({ticker_symbol})")
+    start_g = time.time()
     try:
         model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-        response = model.generate_content(prompt)
+        response = model.generate_content(prompt, request_options={"timeout": 15})
+        logger.info(f"END: Gemini generation for backtest report ({ticker_symbol}) ({time.time() - start_g:.2f} sec)")
         report_text = response.text.strip()
     except Exception as e:
         logger.error(f"Failed to generate Gemini backtesting report: {str(e)}", exc_info=True)
@@ -703,8 +725,25 @@ def execute_backtest(
     
     # 2. Fetch daily historical data
     try:
-        ticker = yf.Ticker(ticker_symbol)
-        df = ticker.history(period=period)
+        import requests
+        class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
+            def __init__(self, *args, **kwargs):
+                self.timeout = kwargs.pop("timeout", 15)
+                super().__init__(*args, **kwargs)
+            def send(self, request, **kwargs):
+                kwargs["timeout"] = kwargs.get("timeout") or self.timeout
+                return super().send(request, **kwargs)
+                
+        session = requests.Session()
+        adapter = TimeoutHTTPAdapter(timeout=15)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        
+        logger.info(f"START: Yahoo download for {ticker_symbol} (period={period})")
+        start_y = time.time()
+        ticker = yf.Ticker(ticker_symbol, session=session)
+        df = ticker.history(period=period, timeout=15)
+        logger.info(f"END: Yahoo download for {ticker_symbol} (period={period}) ({time.time() - start_y:.2f} sec)")
         
         # Clean data by dropping rows with missing Close prices (such as current partial day rows)
         if not df.empty:
@@ -728,11 +767,12 @@ def execute_backtest(
     
     # 4. Run Backtest
     logger.info(f"Running simulation for strategy: {strategy_name}")
-    if strategy_name == "Buy & Hold":
+    strategy_key = strategy_name.lower().strip()
+    if strategy_key in ["buy & hold", "buy and hold", "buy_and_hold"]:
         portfolio_series, trades = run_buy_and_hold_backtest(df, initial_capital)
-    elif strategy_name == "RSI":
+    elif strategy_key in ["rsi", "mean reversion", "mean_reversion"]:
         portfolio_series, trades = run_rsi_backtest(df, initial_capital)
-    elif strategy_name == "SMA Crossover":
+    elif strategy_key in ["sma crossover", "sma", "sma_crossover"]:
         portfolio_series, trades = run_sma_backtest(df, initial_capital)
     else:
         logger.error(f"Unknown strategy name: {strategy_name}")
@@ -784,7 +824,7 @@ def execute_backtest(
     logger.info(f"Sending backtest simulation metrics to Gemini model: {GEMINI_MODEL_NAME}")
     try:
         model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-        response = model.generate_content(prompt)
+        response = model.generate_content(prompt, request_options={"timeout": 15})
         logger.info("Successfully received backtest report from Gemini.")
         
         # 9. Print final report output

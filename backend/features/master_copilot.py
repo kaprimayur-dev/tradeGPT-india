@@ -210,33 +210,42 @@ def generate_master_report_data(portfolio_str: str, db: Chroma, logger: logging.
         macro_data_map = {}
         realtime_data_map = {}
         
-        # Run sub-modules for each top holding
-        for holding in top_holdings:
-            logger.info(f"--- Processing Top Holding: '{holding}' ---")
-            
-            # 3. Run Stock Analyzer
-            logger.info(f"Step 3: Running Stock Analyzer on '{holding}'...")
-            try:
-                stock_data_map[holding] = generate_stock_report_data(holding, db, logger)
-            except Exception as e:
-                logger.error(f"Stock Analyzer failed for '{holding}': {str(e)}")
-                stock_data_map[holding] = {"report": f"Analysis failed: {str(e)}", "sources": []}
+        import concurrent.futures
+        
+        # Parallel execution of sub-modules for top holdings
+        logger.info(f"Step 3/4/5: Running sub-modules concurrently for holdings: {top_holdings}")
+        futures_map = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            for holding in top_holdings:
+                logger.info(f"Submitting concurrent jobs for holding: '{holding}'")
+                f_stock = executor.submit(generate_stock_report_data, holding, db, logger)
+                f_macro = executor.submit(analyze_macro_dependencies_data, holding, db, logger)
+                f_rt = executor.submit(generate_realtime_intelligence_report_data, holding, db, logger)
                 
-            # 4. Run Macro Dependency Analyzer
-            logger.info(f"Step 4: Running Macro Dependency Analyzer on '{holding}'...")
-            try:
-                macro_data_map[holding] = analyze_macro_dependencies_data(holding, db, logger)
-            except Exception as e:
-                logger.error(f"Macro Dependency failed for '{holding}': {str(e)}")
-                macro_data_map[holding] = {"report": f"Analysis failed: {str(e)}", "sources": []}
+                futures_map.append((holding, "stock", f_stock))
+                futures_map.append((holding, "macro", f_macro))
+                futures_map.append((holding, "rt", f_rt))
                 
-            # 5. Run Real-Time Intelligence Layer
-            logger.info(f"Step 5: Running Real-Time Intelligence Layer on '{holding}'...")
-            try:
-                realtime_data_map[holding] = generate_realtime_intelligence_report_data(holding, db, logger)
-            except Exception as e:
-                logger.error(f"Real-Time Intelligence failed for '{holding}': {str(e)}")
-                realtime_data_map[holding] = {"report": f"Analysis failed: {str(e)}", "sources": [], "realtime_data": {"news": []}}
+            for holding, task_type, future in futures_map:
+                try:
+                    res = future.result()
+                    if task_type == "stock":
+                        stock_data_map[holding] = res
+                    elif task_type == "macro":
+                        macro_data_map[holding] = res
+                    elif task_type == "rt":
+                        realtime_data_map[holding] = res
+                except Exception as e:
+                    logger.error(f"Parallel sub-module '{task_type}' failed for '{holding}': {str(e)}")
+                    fallback_res = {"report": f"Analysis failed: {str(e)}", "sources": []}
+                    if task_type == "rt":
+                        fallback_res["realtime_data"] = {"news": []}
+                    if task_type == "stock":
+                        stock_data_map[holding] = fallback_res
+                    elif task_type == "macro":
+                        macro_data_map[holding] = fallback_res
+                    elif task_type == "rt":
+                        realtime_data_map[holding] = fallback_res
 
         # 6. Aggregate all outputs
         logger.info("Step 6: Aggregating all reports and contexts...")
@@ -265,9 +274,11 @@ def generate_master_report_data(portfolio_str: str, db: Chroma, logger: logging.
             realtime_reports=realtime_reports_str
         )
         
+        logger.info("START: Gemini generation for Master Copilot report")
+        start_g = time.time()
         model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-        response = model.generate_content(master_prompt)
-        logger.info("Step 8: Master Copilot Report successfully generated.")
+        response = model.generate_content(master_prompt, request_options={"timeout": 15})
+        logger.info(f"END: Gemini generation for Master Copilot report ({time.time() - start_g:.2f} sec)")
         
         # News sources deduplication
         seen_news = set()

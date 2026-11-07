@@ -36,14 +36,21 @@ from app.routes import (
 )
 
 # Setup logging
+from app.logging_context import RequestIdFilter, set_request_id
+
 def setup_app_logging() -> logging.Logger:
-    log_format = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+    log_format = "%(asctime)s [%(levelname)s]%(request_id)s %(name)s - %(message)s"
     logger = logging.getLogger("TradeGPT_FastAPI")
     logger.setLevel(logging.INFO)
+    
+    # Configure uvicorn loggers too to match formats and request IDs
+    uvicorn_logger = logging.getLogger("uvicorn.error")
+    req_filter = RequestIdFilter()
     
     if not logger.handlers:
         stream_handler = logging.StreamHandler(sys.stdout)
         stream_handler.setFormatter(logging.Formatter(log_format))
+        stream_handler.addFilter(req_filter)
         logger.addHandler(stream_handler)
         
         log_file_path = os.path.join(BACKEND_DIR, "master_copilot.log")
@@ -53,7 +60,12 @@ def setup_app_logging() -> logging.Logger:
             
         file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
         file_handler.setFormatter(logging.Formatter(log_format))
+        file_handler.addFilter(req_filter)
         logger.addHandler(file_handler)
+        
+    for handler in uvicorn_logger.handlers:
+        handler.addFilter(req_filter)
+        handler.setFormatter(logging.Formatter(log_format))
         
     return logger
 
@@ -72,20 +84,25 @@ def get_vector_store():
     if _db_cache is None:
         with _db_lock:
             if _db_cache is None:
-                logger.info("Lazy initializing ChromaDB vector store...")
+                logger.info("Initializing ChromaDB vector store...")
                 try:
                     db = load_vector_store(CHROMA_DB_DIR, CHROMA_COLLECTION_NAME, EMBEDDING_MODEL_NAME, logger)
                     _db_cache = db
-                    logger.info("ChromaDB vector store lazy loading completed.")
+                    logger.info("ChromaDB vector store initialization completed.")
                 except Exception as e:
-                    logger.critical(f"Failed to lazy load vector store: {str(e)}", exc_info=True)
+                    logger.critical(f"Failed to load vector store: {str(e)}", exc_info=True)
                     _db_cache = None
     return _db_cache
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup lifecycle - does NOT block on ChromaDB/embeddings initialization
-    logger.info("FastAPI TradeGPT startup sequence complete. Vector store will be initialized lazily.")
+    # Startup lifecycle - block on database loading to avoid first-request latency in production
+    logger.info("Starting FastAPI application and warming up models/vector store...")
+    db = get_vector_store()
+    if db is None:
+        logger.error("Database initialization failed during application startup.")
+    else:
+        logger.info("Database and embeddings preloaded successfully.")
     yield
     
     # Shutdown lifecycle
@@ -106,6 +123,50 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Request ID Middleware
+import uuid
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class RequestIdMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        req_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        set_request_id(req_id)
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = req_id
+        return response
+
+app.add_middleware(RequestIdMiddleware)
+
+# Structured JSON error response handlers
+from fastapi.responses import JSONResponse
+from fastapi import Request, HTTPException
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception occurred: {str(exc)}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "error": "Internal Server Error",
+            "details": str(exc),
+            "stage": "unhandled_error"
+        }
+    )
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    logger.error(f"HTTPException occurred: {exc.detail}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "error": exc.detail,
+            "details": getattr(exc, "detail", str(exc)),
+            "stage": "http_error"
+        }
+    )
 
 # Include endpoint routers directly under /
 app.include_router(health_router)

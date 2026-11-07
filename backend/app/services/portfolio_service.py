@@ -4,7 +4,7 @@ from typing import Dict, Any
 from langchain_community.vectorstores import Chroma
 from features.master_copilot import generate_master_report_data
 
-logger = logging.getLogger("PortfolioService")
+logger = logging.getLogger("uvicorn.error")
 
 class PortfolioService:
     @staticmethod

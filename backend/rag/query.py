@@ -25,12 +25,18 @@ import google.generativeai as genai
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
+import time
 
 # --- Configuration Constants ---
 CHROMA_DB_DIR = os.getenv("RAG_CHROMA_DB_DIR", os.path.join(BACKEND_DIR, "chromadb_store"))
 EMBEDDING_MODEL_NAME = os.getenv("RAG_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 CHROMA_COLLECTION_NAME = os.getenv("RAG_COLLECTION_NAME", "trade_gpt_reports")
 GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+# In-memory RAG retrieval cache
+_rag_cache = {}
+_rag_cache_lock = threading.Lock()
+RAG_CACHE_DURATION_SECS = 300
 
 # Configure Google Generative AI
 API_KEY = os.getenv("GEMINI_API_KEY")
@@ -159,14 +165,31 @@ def retrieve_relevant_chunks(
     if db is None:
         logger.warning("Vector database is None (unavailable). Skipping semantic retrieval and returning empty results.")
         return []
+        
+    global _rag_cache
+    cache_key = (query, k)
+    now = time.time()
+    
+    with _rag_cache_lock:
+        if cache_key in _rag_cache:
+            results, cached_time = _rag_cache[cache_key]
+            if (now - cached_time) < RAG_CACHE_DURATION_SECS:
+                logger.info(f"RAG Cache Hit: Serving cached retrieved chunks for query: '{query}' (age: {now - cached_time:.1f}s)")
+                return results
+
     try:
+        start_t = time.time()
         results = db.similarity_search_with_score(query, k=k)
-        logger.info(f"Successfully retrieved {len(results)} chunks from ChromaDB.")
+        duration = time.time() - start_t
+        logger.info(f"Successfully retrieved {len(results)} chunks from ChromaDB in {duration:.2f} seconds.")
         
         for i, (doc, score) in enumerate(results):
             filename = doc.metadata.get("source_filename", "unknown")
             page = doc.metadata.get("page", 0) + 1
             logger.info(f"  [{i+1}] Doc: {filename} | Page: {page} | Score: {score:.4f}")
+            
+        with _rag_cache_lock:
+            _rag_cache[cache_key] = (results, now)
             
         return results
     except Exception as e:
@@ -202,7 +225,7 @@ def generate_grounded_answer(
     logger.info(f"Sending prompt to Gemini model: {GEMINI_MODEL_NAME}")
     try:
         model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-        response = model.generate_content(prompt)
+        response = model.generate_content(prompt, request_options={"timeout": 15})
         logger.info("Successfully received LLM response.")
         return response.text
     except Exception as e:

@@ -1,7 +1,7 @@
 import logging
 from features.backtesting_engine import run_backtest_simulation
 
-logger = logging.getLogger("BacktestService")
+logger = logging.getLogger("uvicorn.error")
 
 class BacktestService:
     @staticmethod

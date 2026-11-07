@@ -142,7 +142,21 @@ def fetch_realtime_data(company_name: str, logger: logging.Logger) -> Dict[str, 
     
     # 1. Fetch market data
     try:
-        ticker = yf.Ticker(ticker_symbol)
+        import requests
+        class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
+            def __init__(self, *args, **kwargs):
+                self.timeout = kwargs.pop("timeout", 10)
+                super().__init__(*args, **kwargs)
+            def send(self, request, **kwargs):
+                kwargs["timeout"] = kwargs.get("timeout") or self.timeout
+                return super().send(request, **kwargs)
+                
+        session = requests.Session()
+        adapter = TimeoutHTTPAdapter(timeout=10)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        
+        ticker = yf.Ticker(ticker_symbol, session=session)
         info = ticker.info
         
         market_data["ticker"] = ticker_symbol
@@ -279,10 +293,11 @@ def generate_realtime_intelligence_report_data(
     )
     
     # 6. Invoke Gemini LLM for real-time + macro synthesis
-    logger.info(f"Sending prompt to Gemini model: {GEMINI_MODEL_NAME}")
+    logger.info(f"START: Gemini generation for Realtime Intelligence ({company_name})")
+    start_g = time.time()
     model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-    response = model.generate_content(prompt)
-    logger.info("Successfully received intelligence report from Gemini.")
+    response = model.generate_content(prompt, request_options={"timeout": 15})
+    logger.info(f"END: Gemini generation for Realtime Intelligence ({company_name}) ({time.time() - start_g:.2f} sec)")
     
     # 7. Extract RAG sources
     sources = extract_sources(retrieved_results)
@@ -551,7 +566,21 @@ def fetch_market_snapshot(
         
     news_articles = []
     try:
-        nifty_obj = yf.Ticker("^NSEI")
+        import requests
+        class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
+            def __init__(self, *args, **kwargs):
+                self.timeout = kwargs.pop("timeout", 10)
+                super().__init__(*args, **kwargs)
+            def send(self, request, **kwargs):
+                kwargs["timeout"] = kwargs.get("timeout") or self.timeout
+                return super().send(request, **kwargs)
+                
+        session = requests.Session()
+        adapter = TimeoutHTTPAdapter(timeout=10)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        
+        nifty_obj = yf.Ticker("^NSEI", session=session)
         
         import concurrent.futures
         logger.info("Fetching Nifty news with 2.0s timeout protection...")

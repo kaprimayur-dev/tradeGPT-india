@@ -141,17 +141,29 @@ TICKER_MAPPING = {
 
 # --- JSON Prompt for Structured Research Response ---
 RESEARCH_JSON_PROMPT = """You are a senior equity research analyst at TradeGPT India. 
-Extract structured financial insights for the company "{company_name}" from the provided annual report contexts.
+Extract structured financial insights for the company "{company_name}" (Ticker: {ticker_symbol}) from the provided annual report contexts and live market metrics.
+
+LIVE MARKET & TECHNICAL METRICS:
+- Current Price: INR {current_price}
+- 1D Change: {change_pct}%
+- Market Cap: {market_cap}
+- P/E Ratio: {pe_ratio}
+- Beta: {beta}
+- RSI (14): {rsi}
+- SMA (50): {sma_50}
+- SMA (200): {sma_200}
+- Volume: {volume}
+- VWAP: {vwap}
 
 CONTEXT:
 {context}
 
 You must return a JSON object matching this schema:
 {{
-  "recommendation": "BUY" | "HOLD" | "SELL" (recommendation based on report sentiment),
+  "recommendation": "BUY" | "HOLD" | "SELL" (recommendation based on report sentiment and metrics),
   "target_price": float (estimated target price if mentioned, or a sensible target price based on current stock price: {current_price}),
   "upside": float (estimated upside percentage, e.g. 15.5 for 15.5%),
-  "report": "markdown formatted executive summary of the stock's bull and bear case",
+  "report": "markdown formatted executive summary of the stock's bull and bear case, referencing the live metrics and context",
   "growth_drivers": [
     {{
       "title": "short driver title",
@@ -242,9 +254,59 @@ def generate_structured_research(company_name: str, db: Chroma, logger: logging.
                 cache_data_copy["timestamp"] = datetime.datetime.now().isoformat()
                 return cache_data_copy
                 
-    logger.info(f"Structured Research: retrieving RAG chunks for '{company_name}'")
+    company_key = company_name.lower().strip()
+    ticker_symbol = TICKER_MAPPING.get(company_key, f"{company_name.upper()}.NS")
+    if not ticker_symbol.endswith(".NS") and "." not in ticker_symbol:
+        ticker_symbol = f"{ticker_symbol}.NS"
+
     retrieval_query = f"financial performance, SWOT analysis, growth drivers, risks, margins, business outlook, and balance sheet details for {company_name}"
-    retrieved_results = retrieve_relevant_chunks(retrieval_query, db, k=10, logger=logger)
+    
+    import requests
+    class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
+        def __init__(self, *args, **kwargs):
+            self.timeout = kwargs.pop("timeout", 10)
+            super().__init__(*args, **kwargs)
+        def send(self, request, **kwargs):
+            kwargs["timeout"] = kwargs.get("timeout") or self.timeout
+            return super().send(request, **kwargs)
+            
+    session = requests.Session()
+    adapter = TimeoutHTTPAdapter(timeout=10)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    
+    import concurrent.futures
+    logger.info(f"START Parallel Fetch for {company_name} ({ticker_symbol})")
+    start_all = time.time()
+    
+    # We initialize separate Ticker objects to avoid concurrent thread access to the same Ticker cache
+    ticker_info = yf.Ticker(ticker_symbol, session=session)
+    ticker_hist = yf.Ticker(ticker_symbol, session=session)
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        f_rag = executor.submit(retrieve_relevant_chunks, retrieval_query, db, 10, logger)
+        f_info = executor.submit(lambda: ticker_info.info)
+        f_hist = executor.submit(ticker_hist.history, period="1y", timeout=10)
+        
+        try:
+            retrieved_results = f_rag.result()
+        except Exception as e:
+            logger.error(f"Parallel RAG retrieval failed: {str(e)}")
+            retrieved_results = []
+            
+        try:
+            info = f_info.result()
+        except Exception as e:
+            logger.error(f"Parallel yfinance info fetch failed: {str(e)}")
+            info = {}
+            
+        try:
+            hist_df = f_hist.result()
+        except Exception as e:
+            logger.error(f"Parallel yfinance history fetch failed: {str(e)}")
+            hist_df = pd.DataFrame()
+            
+    logger.info(f"END Parallel Fetch for {company_name} ({time.time() - start_all:.2f} sec)")
     
     context_str = ""
     citations = []
@@ -265,63 +327,39 @@ def generate_structured_research(company_name: str, db: Chroma, logger: logging.
             "meta": "No annual report matching company found in vector DB"
         })
         
-    company_key = company_name.lower().strip()
-    ticker_symbol = TICKER_MAPPING.get(company_key, f"{company_name.upper()}.NS")
-    if not ticker_symbol.endswith(".NS") and "." not in ticker_symbol:
-        ticker_symbol = f"{ticker_symbol}.NS"
+    price = info.get("currentPrice") or info.get("regularMarketPrice") or 0.0
+    if price == 0.0 and not hist_df.empty:
+        price = float(hist_df["Close"].iloc[-1])
         
-    logger.info(f"Structured Research: Fetching market data for {ticker_symbol}")
-    
-    price = 0.0
+    if price == 0.0:
+        raise ValueError(f"Could not retrieve market data or price for stock symbol '{company_name}'. Please ensure the ticker or company name is correct and listed on NSE.")
+        
+    prev_close = info.get("previousClose")
+    if not prev_close and not hist_df.empty and len(hist_df) > 1:
+        prev_close = float(hist_df["Close"].iloc[-2])
+    else:
+        prev_close = price
+        
     change = 0.0
+    if prev_close and price:
+        change = ((price - prev_close) / prev_close) * 100
+        
     mkt_cap = "N/A"
-    pe_ratio = 0.0
-    beta = 1.0
+    mcap_val = info.get("marketCap")
+    if mcap_val:
+        mkt_cap = format_market_cap(mcap_val)
+        
+    pe_ratio = info.get("trailingPE") or info.get("forwardPE") or 0.0
+    beta = info.get("beta") or 1.0
     
-    try:
-        ticker_obj = yf.Ticker(ticker_symbol)
-        info = ticker_obj.info
-        
-        price = info.get("currentPrice") or info.get("regularMarketPrice") or 0.0
-        if price == 0.0:
-            hist_1d = ticker_obj.history(period="1d")
-            if not hist_1d.empty:
-                price = float(hist_1d["Close"].iloc[-1])
-                
-        if price == 0.0:
-            raise ValueError(f"Could not retrieve market data or price for stock symbol '{company_name}'. Please ensure the ticker or company name is correct and listed on NSE.")
-            
-        prev_close = info.get("previousClose")
-        if not prev_close:
-            hist_2d = ticker_obj.history(period="5d")
-            if len(hist_2d) > 1:
-                prev_close = float(hist_2d["Close"].iloc[-2])
-            else:
-                prev_close = price
-                
-        if prev_close and price:
-            change = ((price - prev_close) / prev_close) * 100
-            
-        mcap_val = info.get("marketCap")
-        if mcap_val:
-            mkt_cap = format_market_cap(mcap_val)
-            
-        pe_ratio = info.get("trailingPE") or info.get("forwardPE") or 0.0
-        beta = info.get("beta") or 1.0
-    except Exception as e:
-        if isinstance(e, ValueError) and "Could not retrieve market data" in str(e):
-            raise
-        logger.error(f"Error fetching market data for {ticker_symbol}: {str(e)}", exc_info=True)
-        
     rsi_val = 50.0
     sma_50_val = price
     sma_200_val = price
     vol_str = "N/A"
     vwap_val = price
     
-    try:
-        hist_df = ticker_obj.history(period="1y")
-        if not hist_df.empty and len(hist_df) >= 14:
+    if not hist_df.empty and len(hist_df) >= 14:
+        try:
             close_series = hist_df["Close"]
             vol_series = hist_df["Volume"]
             
@@ -350,28 +388,44 @@ def generate_structured_research(company_name: str, db: Chroma, logger: logging.
                 vwap_val = float(vwap_series.iloc[-1])
                 if np.isnan(vwap_val) or np.isinf(vwap_val):
                     vwap_val = price
-    except Exception as e:
-        logger.error(f"Error calculating technicals for {ticker_symbol}: {str(e)}", exc_info=True)
-        
+        except Exception as e:
+            logger.error(f"Error calculating technicals for {ticker_symbol}: {str(e)}", exc_info=True)
+            
     prompt = RESEARCH_JSON_PROMPT.format(
         company_name=company_name,
+        ticker_symbol=ticker_symbol,
         context=context_str if context_str else "No context available.",
-        current_price=price if price else 1000.0
+        current_price=price if price else 1000.0,
+        change_pct=round(change, 2),
+        market_cap=mkt_cap,
+        pe_ratio=round(pe_ratio, 2) if pe_ratio else "N/A",
+        beta=round(beta, 2),
+        rsi=round(rsi_val, 2),
+        sma_50=round(sma_50_val, 2),
+        sma_200=round(sma_200_val, 2),
+        volume=vol_str,
+        vwap=round(vwap_val, 2)
     )
     
-    logger.info(f"Structured Research: Invoking Gemini model for {company_name}")
+    logger.info(f"START: Gemini request for {company_name}")
+    start_g = time.time()
     try:
         model = genai.GenerativeModel(GEMINI_MODEL_NAME)
         response = model.generate_content(
             prompt,
-            generation_config={"response_mime_type": "application/json"}
+            generation_config={"response_mime_type": "application/json"},
+            request_options={"timeout": 15}
         )
+        logger.info(f"END: Gemini response for {company_name} ({time.time() - start_g:.2f} sec)")
         json_data = json.loads(response.text.strip())
     except Exception as e:
         logger.warning(f"Failed to get structured JSON from Gemini: {str(e)}. Retrying without mime type.", exc_info=True)
         try:
+            logger.info(f"START: Gemini request fallback for {company_name}")
+            start_gf = time.time()
             model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-            response = model.generate_content(prompt)
+            response = model.generate_content(prompt, request_options={"timeout": 15})
+            logger.info(f"END: Gemini response fallback for {company_name} ({time.time() - start_gf:.2f} sec)")
             text = response.text.strip()
             if text.startswith("```json"):
                 text = text[7:]
@@ -484,7 +538,7 @@ def generate_stock_report_data(company_name: str, db: Chroma, logger: logging.Lo
     # Invoke Gemini LLM
     logger.info(f"Sending prompt to Gemini model: {GEMINI_MODEL_NAME}")
     model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-    response = model.generate_content(prompt)
+    response = model.generate_content(prompt, request_options={"timeout": 15})
     logger.info("Successfully received analysis report from Gemini.")
     
     # Extract sources

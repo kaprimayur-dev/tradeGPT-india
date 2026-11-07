@@ -2,7 +2,7 @@ import logging
 from langchain_community.vectorstores import Chroma
 from features.stock_analyzer import generate_structured_research
 
-logger = logging.getLogger("ResearchService")
+logger = logging.getLogger("uvicorn.error")
 
 class ResearchService:
     @staticmethod
