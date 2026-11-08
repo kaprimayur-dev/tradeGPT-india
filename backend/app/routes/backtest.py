@@ -40,7 +40,8 @@ def run_backtest(payload: BacktestRequest, request: Request):
             strategy=payload.strategy,
             symbol=payload.symbol,
             period=payload.period,
-            initial_capital=payload.initial_capital
+            initial_capital=payload.initial_capital,
+            slippage_pct=payload.slippage_pct if payload.slippage_pct is not None else 0.0005
         )
         logger.info(f"END: Backtest simulation for {payload.symbol} ({payload.strategy}) ({time.time() - start_sim:.2f} sec)")
         

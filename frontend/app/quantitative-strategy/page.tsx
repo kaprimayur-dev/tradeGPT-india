@@ -148,8 +148,10 @@ export default function QuantitativeStrategyPage() {
             className="bg-transparent border-none p-0 text-xs font-bold text-primary focus:ring-0 cursor-pointer outline-none"
           >
             <option value="SMA Crossover">SMA Crossover</option>
-            <option value="Mean Reversion">Mean Reversion</option>
-            <option value="MACD Breakout">MACD Breakout</option>
+            <option value="Mean Reversion (RSI)">Mean Reversion (RSI)</option>
+            <option value="MACD Crossover">MACD Crossover</option>
+            <option value="Bollinger Bands">Bollinger Bands</option>
+            <option value="Buy & Hold">Buy & Hold</option>
           </select>
         </div>
 
@@ -228,12 +230,16 @@ export default function QuantitativeStrategyPage() {
             <span className="font-mono font-bold text-[#191b23]">{period.toUpperCase()}</span>
           </div>
           <div>
-            <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">Commission</span>
-            <span className="font-mono font-bold text-[#191b23]">0.05% flat</span>
+            <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">Brokerage & GST</span>
+            <span className="font-mono font-bold text-[#191b23]">₹20 / 0.03% + 18% GST</span>
           </div>
           <div>
-            <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">Slippage Model</span>
-            <span className="font-mono font-bold text-[#191b23]">Flat Close ticks</span>
+            <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">STT & Stamp Duty</span>
+            <span className="font-mono font-bold text-[#191b23]">0.1% STT | 0.015% Stamp</span>
+          </div>
+          <div>
+            <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">Slippage & Timing</span>
+            <span className="font-mono font-bold text-[#191b23]">5 bps @ Open t+1</span>
           </div>
         </div>
       )}
@@ -379,7 +385,7 @@ export default function QuantitativeStrategyPage() {
                       </div>
                       <span className="text-[10px] text-[#737686] font-semibold mb-0.5">Peak Drawdown</span>
                     </div>
-                    <div className="flex justify-between items-end">
+                    <div className="flex justify-between items-end border-b border-[#e7e7f3] pb-1.5">
                       <div>
                         <p className="text-[10px] text-[#737686]">Win Rate</p>
                         <p className="text-base font-bold text-[#191b23]">
@@ -392,6 +398,19 @@ export default function QuantitativeStrategyPage() {
                           style={{ width: `${backtestResult ? backtestResult.win_rate : 0}%` }}
                         ></div>
                       </div>
+                    </div>
+                    <div className="flex justify-between items-end">
+                      <div>
+                        <p className="text-[10px] text-[#737686]">Profit Factor / Vol</p>
+                        <p className="text-xs font-bold text-[#191b23]">
+                          {backtestResult?.profit_factor !== undefined ? backtestResult.profit_factor.toFixed(2) : "-"}
+                          {" / "}
+                          {backtestResult?.annualized_volatility !== undefined ? `${backtestResult.annualized_volatility.toFixed(1)}%` : "-"}
+                        </p>
+                      </div>
+                      <span className="text-[10px] text-[#737686] font-semibold mb-0.5">
+                        {backtestResult?.market_exposure_pct !== undefined ? `${backtestResult.market_exposure_pct.toFixed(0)}% Exp` : ""}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -421,6 +440,51 @@ export default function QuantitativeStrategyPage() {
                 </div>
                 <div className="text-xs text-[#434655] leading-relaxed font-mono whitespace-pre-wrap select-text bg-[#faf8ff] p-5 border border-[#c3c6d7] rounded-lg overflow-x-auto">
                   {backtestResult.report}
+                </div>
+              </div>
+            )}
+
+            {/* Statutory Cost & Friction Breakdown */}
+            {backtestResult?.cost_breakdown && (
+              <div className="bg-white border border-[#c3c6d7] rounded-xl overflow-hidden shadow-sm p-4">
+                <div className="flex items-center justify-between border-b border-[#e7e7f3] pb-2 mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[#004ac6] !text-base">receipt_long</span>
+                    <h3 className="font-display font-bold text-xs text-[#191b23] uppercase tracking-wider">Indian Statutory & Slippage Friction</h3>
+                  </div>
+                  <span className="text-[11px] font-mono font-bold text-[#ba1a1a]">
+                    Total Friction: ₹{backtestResult.cost_breakdown.total_costs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 text-xs">
+                  <div className="bg-[#faf8ff] p-2 rounded border border-[#e7e7f3]">
+                    <span className="text-[9px] text-[#737686] font-bold block uppercase">Brokerage</span>
+                    <span className="font-mono font-bold text-[#191b23]">₹{backtestResult.cost_breakdown.brokerage.toFixed(2)}</span>
+                  </div>
+                  <div className="bg-[#faf8ff] p-2 rounded border border-[#e7e7f3]">
+                    <span className="text-[9px] text-[#737686] font-bold block uppercase">STT (0.1%)</span>
+                    <span className="font-mono font-bold text-[#191b23]">₹{backtestResult.cost_breakdown.stt.toFixed(2)}</span>
+                  </div>
+                  <div className="bg-[#faf8ff] p-2 rounded border border-[#e7e7f3]">
+                    <span className="text-[9px] text-[#737686] font-bold block uppercase">Exchange</span>
+                    <span className="font-mono font-bold text-[#191b23]">₹{backtestResult.cost_breakdown.exchange_charges.toFixed(2)}</span>
+                  </div>
+                  <div className="bg-[#faf8ff] p-2 rounded border border-[#e7e7f3]">
+                    <span className="text-[9px] text-[#737686] font-bold block uppercase">GST (18%)</span>
+                    <span className="font-mono font-bold text-[#191b23]">₹{backtestResult.cost_breakdown.gst.toFixed(2)}</span>
+                  </div>
+                  <div className="bg-[#faf8ff] p-2 rounded border border-[#e7e7f3]">
+                    <span className="text-[9px] text-[#737686] font-bold block uppercase">Stamp Duty</span>
+                    <span className="font-mono font-bold text-[#191b23]">₹{backtestResult.cost_breakdown.stamp_duty.toFixed(2)}</span>
+                  </div>
+                  <div className="bg-[#faf8ff] p-2 rounded border border-[#e7e7f3]">
+                    <span className="text-[9px] text-[#737686] font-bold block uppercase">SEBI</span>
+                    <span className="font-mono font-bold text-[#191b23]">₹{backtestResult.cost_breakdown.sebi_charges.toFixed(2)}</span>
+                  </div>
+                  <div className="bg-[#faf8ff] p-2 rounded border border-[#e7e7f3]">
+                    <span className="text-[9px] text-[#737686] font-bold block uppercase">Slippage</span>
+                    <span className="font-mono font-bold text-[#ba1a1a]">₹{backtestResult.cost_breakdown.slippage.toFixed(2)}</span>
+                  </div>
                 </div>
               </div>
             )}

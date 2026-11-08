@@ -32,6 +32,7 @@ import random
 from rag.query import GEMINI_MODEL_NAME
 
 from core.gemini_client import call_gemini, GeminiClientError
+from features.backtesting import BacktestEngine, IndianTradingCostModel, CostBreakdown, get_strategy
 
 # Configure Google Generative AI
 API_KEY = os.getenv("GEMINI_API_KEY")
@@ -72,8 +73,13 @@ SIMULATION METRICS:
 * Outperformance vs Benchmark: {outperformance:.2f}%
 * Sharpe Ratio (Annualized, risk-free rate = {rf_rate_pct}%): {sharpe_ratio:.2f}
 * Maximum Drawdown: {max_drawdown:.2f}%
+* Annualized Volatility: {annualized_volatility:.2f}%
+* Profit Factor: {profit_factor:.2f}
 * Number of Trades: {num_trades}
 * Win Rate: {win_rate:.2f}%
+* Market Exposure: {market_exposure_pct:.2f}%
+* Total Transaction Costs: {total_costs:,.2f} INR
+* Total Slippage Incurred: {total_slippage:,.2f} INR
 
 TRADE LIST SUMMARY:
 {trades_summary}
@@ -85,7 +91,7 @@ STRATEGY BACKTEST REPORT: {strategy_name} ON {ticker}
 ================================================================================
 
 ## 1. Strategy Summary
-[Briefly explain the logic, rules, and parameters of the strategy (e.g. how RSI oversold/overbought or SMA crossovers trigger buy/sell signals) and what timeframe was tested.]
+[Briefly explain the logic, rules, and parameters of the strategy (e.g. how RSI oversold/overbought, SMA crossover, MACD line/signal divergence, or Bollinger Band breakouts trigger buy/sell signals) and what timeframe was tested.]
 
 ## 2. Historical Performance
 [Summarize the growth of the initial capital, the final portfolio value, and the total and annualized returns (CAGR).]
@@ -93,28 +99,28 @@ STRATEGY BACKTEST REPORT: {strategy_name} ON {ticker}
 ## 3. Benchmark Comparison
 [Compare the strategy's total return and risk against the Buy & Hold benchmark. Clearly state whether the strategy outperformed or underperformed the benchmark and explain why based on price movements during the backtest timeframe.]
 
-## 4. Win Rate
-[Report and analyze the win rate and the number of winning vs losing trades. Discuss the implications of the trade distribution.]
+## 4. Win Rate & Profit Factor
+[Report and analyze the win rate ({win_rate:.2f}%), profit factor ({profit_factor:.2f}), and the number of winning vs losing trades. Discuss the implications of the trade distribution.]
 
-## 5. Maximum Drawdown
-[Explain the Maximum Drawdown (MDD) observed during the simulation. Highlight the peak-to-trough drop and discuss the capital preservation aspects of the strategy.]
+## 5. Maximum Drawdown & Volatility
+[Explain the Maximum Drawdown ({max_drawdown:.2f}%) and Annualized Volatility ({annualized_volatility:.2f}%) observed during the simulation. Highlight the peak-to-trough drop and discuss capital preservation.]
 
-## 6. Sharpe Ratio
-[Discuss the Sharpe Ratio. Explain what it indicates about the risk-adjusted returns of the strategy and whether the volatility was justified by the excess returns.]
+## 6. Sharpe Ratio & Risk Adjustment
+[Discuss the Sharpe Ratio ({sharpe_ratio:.2f}). Explain what it indicates about the risk-adjusted returns of the strategy and whether the volatility was justified by the excess returns over the {rf_rate_pct}% risk-free rate.]
 
-## 7. Number of Trades
-[Discuss the trade frequency. Explain if the strategy trades too frequently (generating high transaction cost friction in reality) or too infrequently, and how this relates to the technical indicators used.]
+## 7. Trade Frequency & Market Exposure
+[Discuss the trade frequency ({num_trades} completed trades) and market exposure ({market_exposure_pct:.2f}% of trading days in active positions).]
 
-## 8. Strategy Strengths
-[List the major strengths of this strategy, e.g. works well in specific market phases (trending vs sideways), capital preservation properties, or automated rule clarity.]
+## 8. Transaction Friction & Slippage Impact
+[Analyze the total friction incurred: ₹{total_costs:,.2f} in statutory taxes/fees and ₹{total_slippage:,.2f} in execution slippage. Discuss how Indian delivery STT (0.1%), GST, stamp duty, and slippage impact net realized returns.]
 
-## 9. Strategy Weaknesses
-[List the major weaknesses, e.g. whipsaw losses in choppy markets, lagging indicators, high drawdowns, or dependency on specific parameter values.]
+## 9. Strategy Strengths & Weaknesses
+[List the major strengths and weaknesses, e.g. trending vs choppy market behavior, whipsaw vulnerability, lagging indicators, or capital preservation.]
 
 ## 10. Educational Disclaimer
 [Include a prominent, clear, educational disclaimer stating that:
 - This is a historical backtesting simulation and does not guarantee future performance.
-- The results do not account for taxes, slippage, brokerage, or exchange transaction fees.
+- The simulation includes realistic Indian equity cash market statutory charges (STT, exchange charges, GST, SEBI charges, stamp duty) and execution slippage at bar t+1 Open.
 - This report is for educational purposes only and does not constitute financial advice, buy/sell recommendations, or price predictions.]
 
 ================================================================================
@@ -182,9 +188,13 @@ def parse_backtest_query(query: str) -> Tuple[str, str] or None:
         company = parts[1].strip()
         
         if "rsi" in strategy_raw:
-            strategy = "RSI"
+            strategy = "Mean Reversion (RSI)"
         elif "sma" in strategy_raw or "moving average" in strategy_raw or "crossover" in strategy_raw:
             strategy = "SMA Crossover"
+        elif "macd" in strategy_raw:
+            strategy = "MACD Crossover"
+        elif "bollinger" in strategy_raw:
+            strategy = "Bollinger Bands"
         elif "buy" in strategy_raw or "hold" in strategy_raw:
             strategy = "Buy & Hold"
         else:
@@ -499,9 +509,13 @@ def run_backtest_simulation(
     company_name: str, 
     period: str = "5y", 
     initial_capital: float = 100000.0,
+    slippage_pct: float = 0.0005,
     logger: logging.Logger = None
 ) -> dict:
-    """Fetches yfinance data, simulates selected strategy, computes metrics, formats lists, and returns dictionary data."""
+    """Fetches yfinance data, simulates selected strategy using BacktestEngine,
+    computes deterministic metrics with Indian statutory costs, formats trade ledgers,
+    and returns comprehensive response dictionary.
+    """
     if logger is None:
         logger = logging.getLogger("BacktestingEngine")
         
@@ -535,42 +549,43 @@ def run_backtest_simulation(
         df = ticker.history(period=period, timeout=15)
         logger.info(f"END: Yahoo download for {ticker_symbol} (period={period}) ({time.time() - start_y:.2f} sec)")
         
-        if not df.empty:
-            df = df.dropna(subset=["Close"])
-        if df.empty or len(df) < 14:
+        if df.empty or len(df) < 15:
             raise ValueError(f"Insufficient historical data retrieved for ticker: {ticker_symbol}")
     except Exception as e:
         logger.error(f"Failed to download data for ticker '{ticker_symbol}': {str(e)}", exc_info=True)
         raise ValueError(f"Failed to fetch historical data for '{company_name}': {str(e)}")
         
-    df["RSI"] = calculate_rsi(df["Close"])
-    df["SMA_50"] = calculate_sma(df["Close"], 50)
-    df["SMA_200"] = calculate_sma(df["Close"], 200)
-    
-    strategy_key = strategy_name.lower().strip()
-    if strategy_key in ["buy & hold", "buy and hold", "buy_and_hold"]:
-        portfolio_series, trades = run_buy_and_hold_backtest(df, initial_capital)
-        strategy_name_display = "Buy & Hold"
-    elif strategy_key in ["rsi", "mean reversion", "mean_reversion"]:
-        portfolio_series, trades = run_rsi_backtest(df, initial_capital)
-        strategy_name_display = "Mean Reversion (RSI)"
-    elif strategy_key in ["sma crossover", "sma", "sma_crossover"]:
-        portfolio_series, trades = run_sma_backtest(df, initial_capital)
-        strategy_name_display = "SMA Crossover"
-    else:
-        raise ValueError(f"Unknown strategy name: {strategy_name}")
-        
-    metrics = calculate_metrics(portfolio_series, trades, initial_capital)
-    
-    bh_portfolio, bh_trades = run_buy_and_hold_backtest(df, initial_capital)
-    bh_metrics = calculate_metrics(bh_portfolio, bh_trades, initial_capital)
-    
+    # Execute strategy simulation via hardened BacktestEngine
+    cost_model = IndianTradingCostModel(slippage_pct=slippage_pct)
+    engine = BacktestEngine(cost_model=cost_model, slippage_pct=slippage_pct)
+
+    strat_result = engine.run(
+        df=df,
+        strategy=strategy_name,
+        symbol=ticker_symbol,
+        initial_capital=initial_capital
+    )
+    strategy_name_display = strat_result["strategy_name"]
+    metrics = strat_result["metrics"]
+    trades = strat_result["closed_trades"]
+    portfolio_series = strat_result["equity_series"]
+
+    # Compute Benchmark (Buy & Hold baseline on identical cleaned data)
+    benchmark_result = engine.run(
+        df=df,
+        strategy="Buy & Hold",
+        symbol=ticker_symbol,
+        initial_capital=initial_capital
+    )
+    bh_metrics = benchmark_result["metrics"]
+    bh_portfolio = benchmark_result["equity_series"]
+
     outperformance = metrics["total_return"] - bh_metrics["total_return"]
     
     trades_summary = ""
     if trades:
         for idx, t in enumerate(trades[:15]):
-            trades_summary += f"  [{idx+1}] {t['type']} | Buy: {t['buy_date']} @ {t['buy_price']} | Sell: {t['sell_date']} @ {t['sell_price']} | Return: {t['profit_pct']}%\n"
+            trades_summary += f"  [{idx+1}] Long | Buy: {t.entry_date} @ {t.entry_fill_price:.2f} | Sell: {t.exit_date} @ {t.exit_fill_price:.2f} | Net PnL: ₹{t.net_pnl:,.2f} ({t.net_return_pct:+.2f}%) | Friction: ₹{t.total_costs:,.2f}\n"
         if len(trades) > 15:
             trades_summary += f"  ... and {len(trades) - 15} more trades executed.\n"
     else:
@@ -591,8 +606,13 @@ def run_backtest_simulation(
         rf_rate_pct=6.0,
         sharpe_ratio=metrics["sharpe_ratio"],
         max_drawdown=metrics["max_drawdown"],
+        annualized_volatility=metrics["annualized_volatility"],
+        profit_factor=metrics["profit_factor"],
         num_trades=metrics["num_trades"],
         win_rate=metrics["win_rate"],
+        market_exposure_pct=metrics["market_exposure_pct"],
+        total_costs=metrics["total_transaction_costs"],
+        total_slippage=metrics["total_slippage_paid"],
         trades_summary=trades_summary
     )
     
@@ -604,30 +624,29 @@ def run_backtest_simulation(
         logger.info(f"END: Gemini generation for backtest report ({ticker_symbol}) ({time.time() - start_g:.2f} sec)")
     except Exception as e:
         logger.error(f"Failed to generate Gemini backtesting report: {str(e)}", exc_info=True)
-        report_text = f"Historical backtest completed for {strategy_name_display} on {ticker_symbol}. Initial: {initial_capital} INR, Final: {metrics['final_value']} INR, CAGR: {metrics['cagr']}%, Sharpe: {metrics['sharpe_ratio']}."
+        report_text = f"Historical backtest completed for {strategy_name_display} on {ticker_symbol}. Initial: ₹{initial_capital:,.2f}, Final: ₹{metrics['final_value']:,.2f}, CAGR: {metrics['cagr']}%, Sharpe: {metrics['sharpe_ratio']}."
         
     formatted_trades = []
     for t in trades:
-        qty = round(initial_capital / t["buy_price"], 2)
         formatted_trades.append({
-            "datetime": t["buy_date"],
+            "datetime": t.entry_date,
             "side": "BUY",
             "asset": ticker_symbol,
-            "qty": qty,
-            "price": t["buy_price"],
-            "value": f"₹{qty * t['buy_price']:,.2f}",
+            "qty": float(t.qty),
+            "price": round(t.entry_fill_price, 2),
+            "value": f"₹{(t.qty * t.entry_fill_price):,.2f}",
             "pnl": "-",
             "positive": True
         })
         formatted_trades.append({
-            "datetime": t["sell_date"],
+            "datetime": t.exit_date,
             "side": "SELL",
             "asset": ticker_symbol,
-            "qty": qty,
-            "price": t["sell_price"],
-            "value": f"₹{qty * t['sell_price']:,.2f}",
-            "pnl": f"{t['profit_pct']:+.2f}%",
-            "positive": t["profit_pct"] > 0
+            "qty": float(t.qty),
+            "price": round(t.exit_fill_price, 2),
+            "value": f"₹{(t.qty * t.exit_fill_price):,.2f}",
+            "pnl": f"{t.net_return_pct:+.2f}%",
+            "positive": t.net_return_pct > 0
         })
         
     formatted_trades.sort(key=lambda x: x["datetime"])
@@ -656,6 +675,12 @@ def run_backtest_simulation(
         "total_return": round(metrics["total_return"], 2),
         "num_trades": metrics["num_trades"],
         "outperformance": round(outperformance, 2),
+        "profit_factor": round(metrics["profit_factor"], 2),
+        "annualized_volatility": round(metrics["annualized_volatility"], 2),
+        "market_exposure_pct": round(metrics["market_exposure_pct"], 2),
+        "total_costs": round(metrics["total_transaction_costs"], 2),
+        "total_slippage": round(metrics["total_slippage_paid"], 2),
+        "cost_breakdown": strat_result["cost_breakdown"],
         "trades": formatted_trades,
         "chart_data": chart_data,
         "timestamp": datetime.datetime.now().isoformat()
@@ -672,7 +697,7 @@ def execute_backtest(
     """Fetches yfinance data, simulates selected strategy, computes metrics, and generates Gemini report.
     
     Args:
-        strategy_name (str): Strategy type ('Buy & Hold', 'RSI', or 'SMA Crossover').
+        strategy_name (str): Strategy type ('Buy & Hold', 'Mean Reversion (RSI)', 'SMA Crossover', 'MACD Crossover', 'Bollinger Bands').
         company_name (str): Company target.
         period (str): Historical lookback period.
         initial_capital (float): Simulation starting cash.
@@ -683,120 +708,18 @@ def execute_backtest(
         
     logger.info(f"Starting historical simulation: Strategy='{strategy_name}' on Stock='{company_name}', Period='{period}'")
     
-    # 1. Resolve ticker
-    company_key = company_name.lower().strip()
-    ticker_symbol = TICKER_MAPPING.get(company_key, f"{company_name.upper()}.NS")
-    logger.info(f"Resolved company name '{company_name}' to ticker: '{ticker_symbol}'")
-    
-    # 2. Fetch daily historical data
     try:
-        import requests
-        class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
-            def __init__(self, *args, **kwargs):
-                self.timeout = kwargs.pop("timeout", 15)
-                super().__init__(*args, **kwargs)
-            def send(self, request, **kwargs):
-                kwargs["timeout"] = kwargs.get("timeout") or self.timeout
-                return super().send(request, **kwargs)
-                
-        session = requests.Session()
-        adapter = TimeoutHTTPAdapter(timeout=15)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-        
-        logger.info(f"START: Yahoo download for {ticker_symbol} (period={period})")
-        start_y = time.time()
-        ticker = yf.Ticker(ticker_symbol, session=session)
-        df = ticker.history(period=period, timeout=15)
-        logger.info(f"END: Yahoo download for {ticker_symbol} (period={period}) ({time.time() - start_y:.2f} sec)")
-        
-        # Clean data by dropping rows with missing Close prices (such as current partial day rows)
-        if not df.empty:
-            df = df.dropna(subset=["Close"])
-            
-        if df.empty or len(df) < 50:
-            logger.error(f"Insufficient historical data retrieved for ticker: {ticker_symbol}")
-            safe_print(f"\nError: Insufficient historical daily price data found for '{company_name}' ({ticker_symbol}).")
-            return
-            
-        logger.info(f"Retrieved {len(df)} daily trading bars for {ticker_symbol} from {df.index[0].date()} to {df.index[-1].date()}")
+        result = run_backtest_simulation(
+            strategy_name=strategy_name,
+            company_name=company_name,
+            period=period,
+            initial_capital=initial_capital,
+            logger=logger
+        )
+        safe_print(result["report"])
     except Exception as e:
-        logger.error(f"Failed to download data for ticker '{ticker_symbol}': {str(e)}", exc_info=True)
-        safe_print(f"\nAn error occurred while fetching historical data for '{company_name}': {str(e)}")
-        return
-        
-    # 3. Calculate indicators
-    df["RSI"] = calculate_rsi(df["Close"])
-    df["SMA_50"] = calculate_sma(df["Close"], 50)
-    df["SMA_200"] = calculate_sma(df["Close"], 200)
-    
-    # 4. Run Backtest
-    logger.info(f"Running simulation for strategy: {strategy_name}")
-    strategy_key = strategy_name.lower().strip()
-    if strategy_key in ["buy & hold", "buy and hold", "buy_and_hold"]:
-        portfolio_series, trades = run_buy_and_hold_backtest(df, initial_capital)
-    elif strategy_key in ["rsi", "mean reversion", "mean_reversion"]:
-        portfolio_series, trades = run_rsi_backtest(df, initial_capital)
-    elif strategy_key in ["sma crossover", "sma", "sma_crossover"]:
-        portfolio_series, trades = run_sma_backtest(df, initial_capital)
-    else:
-        logger.error(f"Unknown strategy name: {strategy_name}")
-        safe_print(f"Error: Unknown strategy type '{strategy_name}'.")
-        return
-        
-    # 5. Compute performance metrics
-    metrics = calculate_metrics(portfolio_series, trades, initial_capital)
-    
-    # 6. Compute Benchmark (always Buy & Hold on same period)
-    logger.info("Computing Buy & Hold benchmark performance...")
-    bh_portfolio, bh_trades = run_buy_and_hold_backtest(df, initial_capital)
-    bh_metrics = calculate_metrics(bh_portfolio, bh_trades, initial_capital)
-    
-    outperformance = metrics["total_return"] - bh_metrics["total_return"]
-    logger.info(f"Backtest completed: Portfolio Final={metrics['final_value']}, CAGR={metrics['cagr']}%, Sharpe={metrics['sharpe_ratio']}, Outperformance={outperformance}%")
-    
-    # 7. Format trade summary list
-    trades_summary = ""
-    if trades:
-        for idx, t in enumerate(trades[:15]): # Limit to top 15 in prompt context
-            trades_summary += f"  [{idx+1}] {t['type']} | Buy: {t['buy_date']} @ {t['buy_price']} | Sell: {t['sell_date']} @ {t['sell_price']} | Return: {t['profit_pct']}%\n"
-        if len(trades) > 15:
-            trades_summary += f"  ... and {len(trades) - 15} more trades executed.\n"
-    else:
-        trades_summary = "  No trades executed during this timeframe."
-        
-    # 8. Compile prompt and invoke Gemini for structured report
-    prompt = BACKTEST_PROMPT_TEMPLATE.format(
-        ticker=ticker_symbol,
-        strategy_name=strategy_name,
-        start_date=df.index[0].strftime("%Y-%m-%d"),
-        end_date=df.index[-1].strftime("%Y-%m-%d"),
-        years=metrics["years"],
-        initial_capital=initial_capital,
-        final_value=metrics["final_value"],
-        total_return=metrics["total_return"],
-        cagr=metrics["cagr"],
-        benchmark_return=bh_metrics["total_return"],
-        outperformance=outperformance,
-        rf_rate_pct=6.0,
-        sharpe_ratio=metrics["sharpe_ratio"],
-        max_drawdown=metrics["max_drawdown"],
-        num_trades=metrics["num_trades"],
-        win_rate=metrics["win_rate"],
-        trades_summary=trades_summary
-    )
-    
-    logger.info(f"Sending backtest simulation metrics to Gemini model: {GEMINI_MODEL_NAME}")
-    try:
-        report_text = call_gemini(prompt, log=logger).strip()
-        logger.info("Successfully received backtest report from Gemini.")
-        
-        # 9. Print final report output
-        safe_print(report_text)
-        
-    except Exception as e:
-        logger.error(f"Failed to generate Gemini backtesting report: {str(e)}", exc_info=True)
-        safe_print(f"\nAn error occurred while compiling the Backtesting report: {str(e)}")
+        logger.error(f"Failed to execute backtest: {str(e)}", exc_info=True)
+        safe_print(f"\nAn error occurred while executing the backtest for '{company_name}': {str(e)}")
 
 
 def main():
@@ -822,7 +745,7 @@ def main():
         print("="*60)
         print("TradeGPT India Strategy Backtesting Engine Shell 🧪")
         print("Enter queries in format: 'Backtest <Strategy> on <Company>'")
-        print("Supported Strategies: RSI, SMA Crossover, Buy and Hold")
+        print("Supported Strategies: SMA Crossover, Mean Reversion (RSI), MACD Crossover, Bollinger Bands, Buy and Hold")
         print("Type 'exit', 'quit', or 'q' to end the session.")
         print("="*60)
         

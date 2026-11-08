@@ -215,6 +215,18 @@ export interface ChartPoint {
   benchmark: number;
 }
 
+export interface CostBreakdown {
+  turnover: number;
+  brokerage: number;
+  stt: number;
+  exchange_charges: number;
+  gst: number;
+  sebi_charges: number;
+  stamp_duty: number;
+  slippage: number;
+  total_costs: number;
+}
+
 export interface BacktestResponse {
   success: boolean;
   report: string;
@@ -226,6 +238,12 @@ export interface BacktestResponse {
   total_return: number;
   num_trades: number;
   outperformance: number;
+  profit_factor?: number;
+  annualized_volatility?: number;
+  market_exposure_pct?: number;
+  total_costs?: number;
+  total_slippage?: number;
+  cost_breakdown?: CostBreakdown;
   trades: TradeItem[];
   chart_data: ChartPoint[];
   timestamp: string;
@@ -268,7 +286,8 @@ export const api = {
     strategy: string,
     symbol: string,
     period: string = "5y",
-    initialCapital: number = 100000.0
+    initialCapital: number = 100000.0,
+    slippagePct: number = 0.0005
   ): Promise<BacktestResponse> {
     return fetchWithRetry(`${API_BASE_URL}/backtest`, {
       method: "POST",
@@ -277,6 +296,7 @@ export const api = {
         symbol,
         period,
         initial_capital: initialCapital,
+        slippage_pct: slippagePct,
       }),
     }) as Promise<BacktestResponse>;
   },
