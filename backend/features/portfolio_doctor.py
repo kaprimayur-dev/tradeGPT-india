@@ -25,6 +25,7 @@ else:
 import google.generativeai as genai
 import yfinance as yf
 from langchain_community.vectorstores import Chroma
+from core.gemini_client import call_gemini, GeminiClientError
 
 from rag.query import (
     load_vector_store,
@@ -46,7 +47,7 @@ else:
     logger.warning("GEMINI_API_KEY environment variable not found. Portfolio Doctor AI functions will be disabled.")
 
 # --- Portfolio Diagnosis Prompt Template ---
-PORTFOLIO_PROMPT_TEMPLATE = """You are an expert financial advisor at TradeGPT India, specializing in portfolio health diagnosis and risk management for retail investors.
+PORTFOLIO_PROMPT_TEMPLATE = """You are an educational financial intelligence copilot at TradeGPT India, specializing in quantitative portfolio risk analytics and diversification assessment for informational and research purposes. You do not provide personalized investment advice or buy/sell recommendations.
 Your task is to generate a comprehensive Portfolio Health Report based on the user's holdings, calculated allocations, real-time market snapshots, and historical macro dependencies from annual reports.
 
 PORTFOLIO HOLDINGS & ALLOCATIONS:
@@ -285,7 +286,7 @@ def diagnose_portfolio_data(portfolio_str: str, db: Chroma, logger: logging.Logg
         logger.info(f"Retrieving macro context for: '{company}'")
         retrieval_query = f"macroeconomics, external dependencies, currency risk, and geopolitical factors affecting {company}"
         try:
-            results = retrieve_relevant_chunks(retrieval_query, db, k=3, logger=logger)
+            results = retrieve_relevant_chunks(retrieval_query, db, k=3, logger=logger, company_name=company)
             
             # Format context block
             combined_macro_context += f"--- Macro Context for {company} ---\n"
@@ -334,12 +335,11 @@ def diagnose_portfolio_data(portfolio_str: str, db: Chroma, logger: logging.Logg
     # 7. Invoke Gemini LLM for diagnostic analysis
     logger.info("START: Gemini generation for portfolio report")
     start_g = time.time()
-    model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-    response = model.generate_content(prompt, request_options={"timeout": 15})
+    report_text = call_gemini(prompt, log=logger)
     logger.info(f"END: Gemini generation for portfolio report ({time.time() - start_g:.2f} sec)")
     
     return {
-        "report": response.text.strip(),
+        "report": report_text.strip(),
         "sources": combined_sources,
         "holdings": holdings,
         "metrics": metrics,

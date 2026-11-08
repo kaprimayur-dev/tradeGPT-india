@@ -24,6 +24,7 @@ else:
 
 import google.generativeai as genai
 from langchain_community.vectorstores import Chroma
+from core.gemini_client import call_gemini, GeminiClientError
 
 # Import existing RAG query and retrieval methods
 from rag.query import (
@@ -140,8 +141,14 @@ TICKER_MAPPING = {
 }
 
 # --- JSON Prompt for Structured Research Response ---
-RESEARCH_JSON_PROMPT = """You are a senior equity research analyst at TradeGPT India. 
-Extract structured financial insights for the company "{company_name}" (Ticker: {ticker_symbol}) from the provided annual report contexts and live market metrics.
+RESEARCH_JSON_PROMPT = """You are a financial intelligence research analyst at TradeGPT India. 
+Extract structured financial insights for the company "{company_name}" (Ticker: {ticker_symbol}) using ONLY the provided verified live metrics and contextual disclosures.
+
+CRITICAL INSTRUCTION ON TRUTHFULNESS:
+- Do NOT invent recommendations, price targets, or financial metrics.
+- If a target price or recommendation is not explicitly mentioned or verified in the context, output null.
+- If shareholding pattern (promoter/fii/dii/public) is not explicitly present in the provided context, output null.
+- Base your analysis strictly on the documented facts.
 
 LIVE MARKET & TECHNICAL METRICS:
 - Current Price: INR {current_price}
@@ -160,34 +167,33 @@ CONTEXT:
 
 You must return a JSON object matching this schema:
 {{
-  "recommendation": "BUY" | "HOLD" | "SELL" (recommendation based on report sentiment and metrics),
-  "target_price": float (estimated target price if mentioned, or a sensible target price based on current stock price: {current_price}),
-  "upside": float (estimated upside percentage, e.g. 15.5 for 15.5%),
+  "recommendation": null | "BUY" | "HOLD" | "SELL" (Only if explicitly cited in research context, else null),
+  "target_price": null | float (Only if explicitly cited in context, else null),
+  "upside": null | float (Only if explicitly cited in context, else null),
   "report": "markdown formatted executive summary of the stock's bull and bear case, referencing the live metrics and context",
   "growth_drivers": [
     {{
       "title": "short driver title",
-      "icon": "lucide icon name (e.g. TrendingUp, Zap, Globe, Layers, Shield, Cpu, Activity, DollarSign)",
-      "desc": "detailed explanation based on the report"
+      "icon": "TrendingUp" | "Zap" | "Globe" | "Layers" | "Shield" | "Cpu" | "Activity" | "DollarSign",
+      "desc": "evidence-backed explanation based on the context and metrics"
     }}
   ],
   "risk_matrix": [
     {{
       "factor": "risk factor title",
-      "impact": "High" or "Medium" or "Low",
-      "prob": "High" or "Medium" or "Low",
+      "impact": "High" | "Medium" | "Low",
+      "prob": "High" | "Medium" | "Low",
       "score": float (from 0.0 to 10.0 indicating overall risk level)
     }}
   ],
-  "ownership": {{
-    "promoter": float (promoter share percentage, default to 50.0 if not found),
-    "fii": float (foreign institutional investor share percentage, default to 15.0 if not found),
-    "dii": float (domestic institutional investor share percentage, default to 20.0 if not found),
-    "public": float (retail/public share percentage, default to 15.0 if not found)
-  }}
+  "ownership": null | {{
+    "promoter": float,
+    "fii": float,
+    "dii": float,
+    "public": float
+  }} (Provide ONLY if verified in disclosures, otherwise null)
 }}
 
-Ensure all fields are filled. If not mentioned in the context, use reasonable financial defaults based on the company's size and profile.
 Do not output any markdown wrapping (like ```json ... ```) or extra text. Output ONLY a valid JSON string.
 """
 
@@ -232,6 +238,103 @@ RESEARCH_CACHE_DURATION_SECS = 300 # 5 minutes cache
 _stock_report_cache = {}
 _stock_report_cache_lock = threading.Lock()
 STOCK_REPORT_CACHE_DURATION_SECS = 300 # 5 minutes cache
+
+
+def verify_financial_evidence(
+    json_data: dict,
+    context_str: str,
+    citations: list,
+    price: float
+) -> tuple:
+    """Verifies that extracted recommendations, target prices, and ownership figures
+    are genuinely substantiated by the cited contextual disclosures.
+    
+    A citation's mere existence (e.g., statutory annual report chunks) cannot justify
+    unsupported price targets, ownership patterns, or BUY/SELL recommendations, as
+    statutory corporate filings do not issue price targets or stock ratings.
+    
+    Returns:
+        tuple: (recommendation, target_price, upside, ownership_data)
+    """
+    has_disclosures = bool(citations) and bool(context_str.strip())
+    context_lower = context_str.lower() if context_str else ""
+    
+    # 1. Recommendation verification:
+    # Requires explicit third-party analyst or research consensus evidence in context.
+    # Annual reports never issue BUY/HOLD/SELL ratings on their own stock.
+    recommendation = None
+    if has_disclosures:
+        rec_raw = json_data.get("recommendation")
+        if rec_raw and str(rec_raw).upper() in ["BUY", "HOLD", "SELL"]:
+            has_analyst_consensus = any(term in context_lower for term in [
+                "analyst rating", "analyst recommendation", "consensus recommendation",
+                "brokerage recommendation", "research rating", "target rating"
+            ])
+            if has_analyst_consensus:
+                recommendation = str(rec_raw).upper()
+
+    # 2. Target Price & Upside verification:
+    # Requires explicit target price disclosure and numeric corroboration in context.
+    target_price = None
+    upside = None
+    if has_disclosures:
+        target_price_raw = json_data.get("target_price")
+        if target_price_raw is not None:
+            try:
+                tp_val = round(float(target_price_raw), 2)
+                has_target_mention = any(term in context_lower for term in [
+                    "target price", "price target", "12-month target", "target of inr", "target of rs"
+                ])
+                tp_str = str(int(tp_val))
+                if has_target_mention and tp_str in context_str:
+                    target_price = tp_val
+            except (ValueError, TypeError):
+                target_price = None
+
+    if target_price is not None and price:
+        upside_raw = json_data.get("upside")
+        if upside_raw is not None:
+            try:
+                upside = round(float(upside_raw), 2)
+            except (ValueError, TypeError):
+                upside = round(((target_price - price) / price) * 100, 2)
+        else:
+            upside = round(((target_price - price) / price) * 100, 2)
+
+    # 3. Ownership Structure verification:
+    # Requires explicit shareholding pattern disclosures in context.
+    ownership_data = None
+    if has_disclosures:
+        ownership_raw = json_data.get("ownership")
+        if isinstance(ownership_raw, dict):
+            has_shareholding_context = any(term in context_lower for term in [
+                "shareholding pattern", "promoter holding", "promoter and promoter group",
+                "equity shares held by promoter", "distribution of shareholding", "promoter shareholding"
+            ])
+            p = ownership_raw.get("promoter")
+            f = ownership_raw.get("fii")
+            d = ownership_raw.get("dii")
+            pub = ownership_raw.get("public")
+            if has_shareholding_context and (p is not None or f is not None or d is not None or pub is not None):
+                ownership_data = {
+                    "promoter": round(float(p), 2) if p is not None else None,
+                    "fii": round(float(f), 2) if f is not None else None,
+                    "dii": round(float(d), 2) if d is not None else None,
+                    "public": round(float(pub), 2) if pub is not None else None,
+                    "status": "available"
+                }
+
+    if not ownership_data:
+        ownership_data = {
+            "promoter": None,
+            "fii": None,
+            "dii": None,
+            "public": None,
+            "status": "unavailable"
+        }
+
+    return recommendation, target_price, upside, ownership_data
+
 
 def generate_structured_research(company_name: str, db: Chroma, logger: logging.Logger) -> dict:
     """Fetches stock data, parses indicators, and calls Gemini for structured json summary."""
@@ -284,7 +387,7 @@ def generate_structured_research(company_name: str, db: Chroma, logger: logging.
     ticker_hist = yf.Ticker(ticker_symbol, session=session)
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        f_rag = executor.submit(retrieve_relevant_chunks, retrieval_query, db, 10, logger)
+        f_rag = executor.submit(retrieve_relevant_chunks, retrieval_query, db, 10, logger, company_name=company_name)
         f_info = executor.submit(lambda: ticker_info.info)
         f_hist = executor.submit(ticker_hist.history, period="1y", timeout=10)
         
@@ -321,11 +424,8 @@ def generate_structured_research(company_name: str, db: Chroma, logger: logging.
                 "meta": filename
             })
     else:
-        logger.warning(f"No RAG chunks found for {company_name}")
-        citations.append({
-            "title": "Historical Disclosures",
-            "meta": "No annual report matching company found in vector DB"
-        })
+        logger.info(f"TG-002: No verified filing chunks for {company_name} in vector store")
+        citations = []
         
     price = info.get("currentPrice") or info.get("regularMarketPrice") or 0.0
     if price == 0.0 and not hist_df.empty:
@@ -409,83 +509,80 @@ def generate_structured_research(company_name: str, db: Chroma, logger: logging.
     
     logger.info(f"START: Gemini request for {company_name}")
     start_g = time.time()
+    json_data = {}
     try:
-        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-        response = model.generate_content(
+        raw_text = call_gemini(
             prompt,
             generation_config={"response_mime_type": "application/json"},
-            request_options={"timeout": 15}
-        )
+            log=logger
+        ).strip()
         logger.info(f"END: Gemini response for {company_name} ({time.time() - start_g:.2f} sec)")
-        json_data = json.loads(response.text.strip())
-    except Exception as e:
-        logger.warning(f"Failed to get structured JSON from Gemini: {str(e)}. Retrying without mime type.", exc_info=True)
-        try:
-            logger.info(f"START: Gemini request fallback for {company_name}")
-            start_gf = time.time()
-            model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-            response = model.generate_content(prompt, request_options={"timeout": 15})
-            logger.info(f"END: Gemini response fallback for {company_name} ({time.time() - start_gf:.2f} sec)")
-            text = response.text.strip()
-            if text.startswith("```json"):
-                text = text[7:]
-            if text.endswith("```"):
-                text = text[:-3]
-            json_data = json.loads(text.strip())
-        except Exception as ex:
-            logger.error(f"Structured Research fallback Gemini invocation failed: {str(ex)}")
-            json_data = {
-                "recommendation": "HOLD",
-                "target_price": round(price * 1.1, 2) if price else 110.0,
-                "upside": 10.0,
-                "report": "Executive summary unavailable due to API call failure.",
-                "growth_drivers": [
-                    {"title": "Core Operations", "icon": "TrendingUp", "desc": "Steady operational presence."}
-                ],
-                "risk_matrix": [
-                    {"factor": "Market Risk", "impact": "Medium", "prob": "Medium", "score": 5.0}
-                ],
-                "ownership": {
-                    "promoter": 50.0,
-                    "fii": 15.0,
-                    "dii": 20.0,
-                    "public": 15.0
-                }
-            }
-            
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:]
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]
+        json_data = json.loads(raw_text.strip())
+    except GeminiClientError:
+        # Centralized Gemini errors (503, 429, 401, timeout) must fail immediately; never bypass retries
+        raise
+    except json.JSONDecodeError as jde:
+        logger.warning(f"Failed to parse JSON directly from Gemini: {jde}. Attempting regex extraction without extra API call...")
+        import re
+        match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+        if match:
+            try:
+                json_data = json.loads(match.group(0).strip())
+            except Exception:
+                raise GeminiClientError("Failed to parse structured JSON from Gemini response.", status_code=500)
+        else:
+            raise GeminiClientError("Failed to extract JSON object from Gemini response.", status_code=500)
+    except Exception as ex:
+        logger.error(f"Gemini structured research generation failed: {str(ex)}")
+        raise GeminiClientError(f"AI research synthesis unavailable: {str(ex)}", status_code=503)
+        
+    # Validate and sanitize fields (TG-002.11: Citation existence alone cannot justify unsupported targets/recommendations)
+    recommendation, target_price, upside, ownership_data = verify_financial_evidence(
+        json_data=json_data,
+        context_str=context_str,
+        citations=citations,
+        price=price
+    )
+
     result = {
         "success": True,
+        "status": "available" if bool(citations) else "degraded",
+        "source": "Yahoo Finance" + (" & ChromaDB Disclosures" if bool(citations) else ""),
+        "as_of": datetime.datetime.now().isoformat(),
         "symbol": company_name,
         "ticker": ticker_symbol,
-        "price": round(price, 2),
-        "change": round(change, 2),
+        "price": round(price, 2) if price else None,
+        "change": round(change, 2) if change is not None else None,
         "mkt_cap": mkt_cap,
-        "pe_ratio": round(pe_ratio, 2) if pe_ratio else 0.0,
-        "beta": round(beta, 2),
-        "recommendation": json_data.get("recommendation", "HOLD"),
-        "target_price": round(json_data.get("target_price", price), 2),
-        "upside": round(json_data.get("upside", 0.0), 2),
-        "report": json_data.get("report", ""),
-        "growth_drivers": json_data.get("growth_drivers", []),
-        "risk_matrix": json_data.get("risk_matrix", []),
+        "pe_ratio": round(pe_ratio, 2) if pe_ratio else None,
+        "beta": round(beta, 2) if beta is not None else None,
+        "recommendation": recommendation,
+        "target_price": target_price,
+        "upside": upside,
+        "report": json_data.get("report") or "Executive summary report unavailable.",
+        "growth_drivers": json_data.get("growth_drivers") or [],
+        "risk_matrix": json_data.get("risk_matrix") or [],
         "technical_metrics": {
-            "rsi": round(rsi_val, 2),
-            "sma_50": round(sma_50_val, 2),
-            "sma_200": round(sma_200_val, 2),
+            "rsi": round(rsi_val, 2) if rsi_val is not None else None,
+            "sma_50": round(sma_50_val, 2) if sma_50_val is not None else None,
+            "sma_200": round(sma_200_val, 2) if sma_200_val is not None else None,
             "volume": vol_str,
-            "vwap": round(vwap_val, 2)
+            "vwap": round(vwap_val, 2) if vwap_val is not None else None
         },
         "citations": citations,
-        "ownership": json_data.get("ownership", {
-            "promoter": 50.0,
-            "fii": 15.0,
-            "dii": 20.0,
-            "public": 15.0
-        }),
+        "ownership": ownership_data,
         "timestamp": datetime.datetime.now().isoformat()
     }
     
     with _research_cache_lock:
+        # Bound cache size to 50 items
+        if len(_research_cache) > 50:
+            oldest_k = min(_research_cache.keys(), key=lambda k: _research_cache[k][1])
+            del _research_cache[oldest_k]
         _research_cache[company_key] = (result, time.time())
         
     return result
@@ -518,11 +615,11 @@ def generate_stock_report_data(company_name: str, db: Chroma, logger: logging.Lo
     # Formulate a query targeting financial performance, risks, and drivers
     retrieval_query = f"financial performance, SWOT analysis, growth drivers, risks, margins, business outlook, and balance sheet details for {company_name}"
     
-    retrieved_results = retrieve_relevant_chunks(retrieval_query, db, k=10, logger=logger)
+    retrieved_results = retrieve_relevant_chunks(retrieval_query, db, k=10, logger=logger, company_name=company_name)
     
     if not retrieved_results:
-        logger.warning(f"No relevant data found for '{company_name}' in the database.")
-        return {"report": f"No relevant data found for '{company_name}' in the database.", "sources": []}
+        logger.info(f"TG-002: No verified filing chunks for '{company_name}'. Returning transparent empty context.")
+        return {"report": f"No verified corporate filings found for '{company_name}' in the local disclosure library. Historical filing citations are unavailable.", "sources": []}
         
     # Format the context blocks
     context_str = ""
@@ -537,15 +634,14 @@ def generate_stock_report_data(company_name: str, db: Chroma, logger: logging.Lo
     
     # Invoke Gemini LLM
     logger.info(f"Sending prompt to Gemini model: {GEMINI_MODEL_NAME}")
-    model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-    response = model.generate_content(prompt, request_options={"timeout": 15})
+    report_text = call_gemini(prompt, log=logger)
     logger.info("Successfully received analysis report from Gemini.")
     
     # Extract sources
     sources = extract_sources(retrieved_results)
     
     result = {
-        "report": response.text.strip(),
+        "report": report_text.strip(),
         "sources": sources
     }
     with _stock_report_cache_lock:

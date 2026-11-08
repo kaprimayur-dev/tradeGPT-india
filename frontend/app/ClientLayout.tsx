@@ -22,12 +22,12 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const [latency, setLatency] = useState<number | null>(null);
   const [countdownStr, setCountdownStr] = useState("");
   const [marketStatus, setMarketStatus] = useState({ open: true, label: "Live" });
-  const [usdinrPrice, setUsdinrPrice] = useState(83.50);
-  const [usdinrChange, setUsdinrChange] = useState(-0.02);
+  const [usdinrPrice, setUsdinrPrice] = useState<number | null>(null);
+  const [usdinrChange, setUsdinrChange] = useState<number | null>(null);
 
-  // Footer dynamic values loaded from localStorage
-  const [openPositionsCount, setOpenPositionsCount] = useState(3);
-  const [portfolioHealth, setPortfolioHealth] = useState(84);
+  // Footer dynamic values loaded from actual user activity or localStorage
+  const [openPositionsCount, setOpenPositionsCount] = useState<number | null>(null);
+  const [portfolioHealth, setPortfolioHealth] = useState<number | null>(null);
 
   // Sync theme and sidebar from localStorage on mount
   useEffect(() => {
@@ -236,32 +236,50 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           {children}
         </main>
 
+        {/* Persistent Financial Disclaimer Bar */}
+        <div className="no-print bg-[#f3f3fe] border-t border-[#e7e7f3] px-6 py-1 text-[10px] text-[#737686] flex items-center justify-between font-mono shrink-0 select-none">
+          <span>
+            <strong className="text-[#191b23]">Notice:</strong> TradeGPT India is an educational financial intelligence platform and is not a SEBI-registered investment adviser. Market data may be delayed. Content does not constitute financial advice.
+          </span>
+          <span className="hidden md:inline text-[9px] opacity-75 font-semibold">Educational Platform Baseline</span>
+        </div>
+
         {/* Global Live System Status Bar */}
         <footer className="no-print h-12 border-t border-border-subtle bg-surface-base flex items-center px-6 gap-6 shrink-0 z-10 select-none text-xs text-text-muted">
           <div className="flex items-center gap-2 border-r border-border-subtle/50 pr-6">
             <span className="text-[9px] text-text-muted font-bold uppercase tracking-wider">USD/INR</span>
-            <span className="font-mono text-xs font-bold text-text-primary">₹{usdinrPrice.toFixed(2)}</span>
-            <span className={`text-[10px] font-bold ${usdinrChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
-              ({usdinrChange >= 0 ? "+" : ""}{usdinrChange.toFixed(2)}%)
+            <span className="font-mono text-xs font-bold text-text-primary">
+              {typeof usdinrPrice === "number" ? `₹${usdinrPrice.toFixed(2)}` : "—"}
             </span>
+            {typeof usdinrChange === "number" && (
+              <span className={`text-[10px] font-bold ${usdinrChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
+                ({usdinrChange >= 0 ? "+" : ""}{usdinrChange.toFixed(2)}%)
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-2 border-r border-border-subtle/50 pr-6">
             <span className="text-[9px] text-text-muted font-bold uppercase tracking-wider">Health Score</span>
-            <div className="flex items-center gap-1">
-              <div className={`w-1.5 h-1.5 rounded-full ${portfolioHealth >= 20 ? "bg-[#10b981]" : "bg-alert-red"}`}></div>
-              <div className={`w-1.5 h-1.5 rounded-full ${portfolioHealth >= 40 ? "bg-[#10b981]" : "bg-alert-red"}`}></div>
-              <div className={`w-1.5 h-1.5 rounded-full ${portfolioHealth >= 60 ? "bg-[#10b981]" : "bg-alert-red"}`}></div>
-              <div className={`w-1.5 h-1.5 rounded-full ${portfolioHealth >= 80 ? "bg-[#10b981]" : "bg-alert-red"}`}></div>
-              <div className={`w-1.5 h-1.5 rounded-full ${portfolioHealth >= 90 ? "bg-[#10b981]" : "bg-border-subtle"}`}></div>
-              <span className="text-[11px] font-bold text-text-primary ml-1">{portfolioHealth}/100</span>
-            </div>
+            {typeof portfolioHealth === "number" ? (
+              <div className="flex items-center gap-1">
+                <div className={`w-1.5 h-1.5 rounded-full ${portfolioHealth >= 20 ? "bg-[#10b981]" : "bg-alert-red"}`}></div>
+                <div className={`w-1.5 h-1.5 rounded-full ${portfolioHealth >= 40 ? "bg-[#10b981]" : "bg-alert-red"}`}></div>
+                <div className={`w-1.5 h-1.5 rounded-full ${portfolioHealth >= 60 ? "bg-[#10b981]" : "bg-alert-red"}`}></div>
+                <div className={`w-1.5 h-1.5 rounded-full ${portfolioHealth >= 80 ? "bg-[#10b981]" : "bg-alert-red"}`}></div>
+                <div className={`w-1.5 h-1.5 rounded-full ${portfolioHealth >= 90 ? "bg-[#10b981]" : "bg-border-subtle"}`}></div>
+                <span className="text-[11px] font-bold text-text-primary ml-1">{portfolioHealth}/100</span>
+              </div>
+            ) : (
+              <span className="text-[11px] font-bold text-text-muted">Not Analyzed</span>
+            )}
           </div>
 
           <div className="flex items-center gap-6 overflow-hidden text-xs">
             <div className="flex items-center gap-2">
-              <span className="text-[9px] text-text-muted font-bold uppercase tracking-wider">Open Positions</span>
-              <span className="font-bold text-text-primary">{openPositionsCount} Active</span>
+              <span className="text-[9px] text-text-muted font-bold uppercase tracking-wider">Watchlist</span>
+              <span className="font-bold text-text-primary">
+                {typeof openPositionsCount === "number" ? `${openPositionsCount} Items` : "0 Items"}
+              </span>
             </div>
             
             <div className="flex items-center gap-2 border-l border-border-subtle/50 pl-6">
@@ -276,7 +294,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           <div className="ml-auto flex items-center gap-5 text-[11px] font-mono">
             <div className="flex items-center gap-1.5">
               <div className="w-1.5 h-1.5 rounded-full bg-[#10b981]"></div>
-              <span className="font-semibold text-text-muted">Mum-1</span>
+              <span className="font-semibold text-text-muted">Localhost / Dev</span>
             </div>
             <span className="font-semibold text-text-muted">Latency: {latency !== null ? `${latency}ms` : "—"}</span>
           </div>

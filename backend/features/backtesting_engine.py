@@ -31,40 +31,7 @@ import time
 import random
 from rag.query import GEMINI_MODEL_NAME
 
-# --- Monkey Patching Gemini SDK for Automatic Rate Limit Retries ---
-def setup_monkey_patch():
-    """Monkey patches the Google Generative AI SDK's generate_content method.
-    This injects automatic retries with exponential backoff and jitter for 429 ResourceExhausted errors
-    and transient API failures, as well as a proactive rate-limiting cooldown delay.
-    """
-    logger = logging.getLogger("BacktestingEngine")
-    original_generate_content = genai.GenerativeModel.generate_content
-
-    def patched_generate_content(self, *args, **kwargs):
-        max_retries = 5
-        base_delay = 12
-        
-        for attempt in range(max_retries):
-            try:
-                return original_generate_content(self, *args, **kwargs)
-            except exceptions.ResourceExhausted as e:
-                if attempt == max_retries - 1:
-                    logger.error("Gemini API rate limit hit (429). Out of retries. Raising exception.")
-                    raise e
-                delay = base_delay * (2 ** attempt) + random.uniform(1, 4)
-                logger.warning(f"Gemini API rate limit hit (429). Retrying in {delay:.2f} seconds... (Attempt {attempt+1}/{max_retries})")
-                time.sleep(delay)
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    logger.error(f"Gemini API call failed: {str(e)}. Out of retries. Raising exception.")
-                    raise e
-                delay = 3 * (2 ** attempt) + random.uniform(0, 2)
-                logger.warning(f"Gemini API call failed with error: {str(e)}. Retrying in {delay:.2f} seconds... (Attempt {attempt+1}/{max_retries})")
-                time.sleep(delay)
-
-    genai.GenerativeModel.generate_content = patched_generate_content
-
-setup_monkey_patch()
+from core.gemini_client import call_gemini, GeminiClientError
 
 # Configure Google Generative AI
 API_KEY = os.getenv("GEMINI_API_KEY")
@@ -633,10 +600,8 @@ def run_backtest_simulation(
     logger.info(f"START: Gemini generation for backtest report ({ticker_symbol})")
     start_g = time.time()
     try:
-        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-        response = model.generate_content(prompt, request_options={"timeout": 15})
+        report_text = call_gemini(prompt, log=logger).strip()
         logger.info(f"END: Gemini generation for backtest report ({ticker_symbol}) ({time.time() - start_g:.2f} sec)")
-        report_text = response.text.strip()
     except Exception as e:
         logger.error(f"Failed to generate Gemini backtesting report: {str(e)}", exc_info=True)
         report_text = f"Historical backtest completed for {strategy_name_display} on {ticker_symbol}. Initial: {initial_capital} INR, Final: {metrics['final_value']} INR, CAGR: {metrics['cagr']}%, Sharpe: {metrics['sharpe_ratio']}."
@@ -823,12 +788,11 @@ def execute_backtest(
     
     logger.info(f"Sending backtest simulation metrics to Gemini model: {GEMINI_MODEL_NAME}")
     try:
-        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-        response = model.generate_content(prompt, request_options={"timeout": 15})
+        report_text = call_gemini(prompt, log=logger).strip()
         logger.info("Successfully received backtest report from Gemini.")
         
         # 9. Print final report output
-        safe_print(response.text.strip())
+        safe_print(report_text)
         
     except Exception as e:
         logger.error(f"Failed to generate Gemini backtesting report: {str(e)}", exc_info=True)

@@ -30,11 +30,11 @@ const getMarketStatus = () => {
 export default function MarketIntelligencePage() {
   const marketStatus = getMarketStatus();
   const [selectedInterval, setSelectedInterval] = useState("15M");
-  const [niftyPrice, setNiftyPrice] = useState(24013.10);
-  const [priceChange, setPriceChange] = useState(-0.64);
+  const [niftyPrice, setNiftyPrice] = useState<number | null>(null);
+  const [priceChange, setPriceChange] = useState<number | null>(null);
   
-  const [sensexPrice, setSensexPrice] = useState(76802.90);
-  const [sensexChange, setSensexChange] = useState(-0.78);
+  const [sensexPrice, setSensexPrice] = useState<number | null>(null);
+  const [sensexChange, setSensexChange] = useState<number | null>(null);
 
   const [selectedIndex, setSelectedIndex] = useState<"NIFTY" | "SENSEX">("NIFTY");
   const [isIndexDropdownOpen, setIsIndexDropdownOpen] = useState(false);
@@ -46,8 +46,8 @@ export default function MarketIntelligencePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [marketData, setMarketData] = useState<MarketDataResponse | null>(null);
-  const [usdinrPrice, setUsdinrPrice] = useState(83.50);
-  const [usdinrChange, setUsdinrChange] = useState(-0.02);
+  const [usdinrPrice, setUsdinrPrice] = useState<number | null>(null);
+  const [usdinrChange, setUsdinrChange] = useState<number | null>(null);
   const [hoveredCandle, setHoveredCandle] = useState<{
     time: string;
     open: number;
@@ -85,20 +85,20 @@ export default function MarketIntelligencePage() {
       if (cache) {
         try {
           const parsed = JSON.parse(cache);
-          if (parsed && parsed.success) {
+          if (parsed && parsed.success && parsed.status !== "unavailable") {
             setMarketData(parsed);
             if (parsed.indices) {
               if (parsed.indices["NIFTY"]) {
-                setNiftyPrice(parsed.indices["NIFTY"].price);
-                setPriceChange(parsed.indices["NIFTY"].change);
+                setNiftyPrice(typeof parsed.indices["NIFTY"].price === "number" ? parsed.indices["NIFTY"].price : null);
+                setPriceChange(typeof parsed.indices["NIFTY"].change === "number" ? parsed.indices["NIFTY"].change : null);
               }
               if (parsed.indices["SENSEX"]) {
-                setSensexPrice(parsed.indices["SENSEX"].price);
-                setSensexChange(parsed.indices["SENSEX"].change);
+                setSensexPrice(typeof parsed.indices["SENSEX"].price === "number" ? parsed.indices["SENSEX"].price : null);
+                setSensexChange(typeof parsed.indices["SENSEX"].change === "number" ? parsed.indices["SENSEX"].change : null);
               }
               if (parsed.indices["USDINR"]) {
-                setUsdinrPrice(parsed.indices["USDINR"].price);
-                setUsdinrChange(parsed.indices["USDINR"].change);
+                setUsdinrPrice(typeof parsed.indices["USDINR"].price === "number" ? parsed.indices["USDINR"].price : null);
+                setUsdinrChange(typeof parsed.indices["USDINR"].change === "number" ? parsed.indices["USDINR"].change : null);
               }
             }
           }
@@ -133,21 +133,21 @@ export default function MarketIntelligencePage() {
       const data = await api.getMarketData(mapping.interval, mapping.period);
       if (data.success) {
         setMarketData(data);
-        if (typeof window !== "undefined") {
+        if (typeof window !== "undefined" && data.status !== "unavailable") {
           localStorage.setItem("tradeGPT_market_data_cache", JSON.stringify(data));
         }
         if (data.indices) {
           if (data.indices["NIFTY"]) {
-            setNiftyPrice(data.indices["NIFTY"].price);
-            setPriceChange(data.indices["NIFTY"].change);
+            setNiftyPrice(typeof data.indices["NIFTY"].price === "number" ? data.indices["NIFTY"].price : null);
+            setPriceChange(typeof data.indices["NIFTY"].change === "number" ? data.indices["NIFTY"].change : null);
           }
           if (data.indices["SENSEX"]) {
-            setSensexPrice(data.indices["SENSEX"].price);
-            setSensexChange(data.indices["SENSEX"].change);
+            setSensexPrice(typeof data.indices["SENSEX"].price === "number" ? data.indices["SENSEX"].price : null);
+            setSensexChange(typeof data.indices["SENSEX"].change === "number" ? data.indices["SENSEX"].change : null);
           }
           if (data.indices["USDINR"]) {
-            setUsdinrPrice(data.indices["USDINR"].price);
-            setUsdinrChange(data.indices["USDINR"].change);
+            setUsdinrPrice(typeof data.indices["USDINR"].price === "number" ? data.indices["USDINR"].price : null);
+            setUsdinrChange(typeof data.indices["USDINR"].change === "number" ? data.indices["USDINR"].change : null);
           }
         }
       }
@@ -170,53 +170,13 @@ export default function MarketIntelligencePage() {
     return () => window.removeEventListener("refreshData", handleRefresh);
   }, [selectedInterval]);
 
-  // Silent background refresh every 60s
+  // Periodic background refresh every 60s without simulated ticks
   useEffect(() => {
     const pollInterval = setInterval(() => {
       loadData(selectedInterval, true);
     }, 60000);
     return () => clearInterval(pollInterval);
   }, [selectedInterval]);
-
-  // Simulate real-time price tick changes once price is loaded
-  useEffect(() => {
-    if (loading || error || !marketStatus.open) return;
-    const interval = setInterval(() => {
-      const niftyDelta = (Math.random() - 0.48) * 4;
-      setNiftyPrice((prev) => parseFloat((prev + niftyDelta).toFixed(2)));
-      setPriceChange((prev) => parseFloat((prev + (niftyDelta / 24000) * 100).toFixed(4)));
-
-      const sensexDelta = (Math.random() - 0.48) * 12;
-      setSensexPrice((prev) => parseFloat((prev + sensexDelta).toFixed(2)));
-      setSensexChange((prev) => parseFloat((prev + (sensexDelta / 76800) * 100).toFixed(4)));
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [loading, error, marketStatus.open]);
-
-  // Update last candle in lightweight-charts when simulated ticks happen
-  useEffect(() => {
-    if (!candleSeriesRef.current) return;
-    const rawCandles = marketData?.history?.[selectedIndex] || [];
-    const lastCandle = rawCandles[rawCandles.length - 1];
-    if (!lastCandle) return;
-    
-    const currentPrice = selectedIndex === "NIFTY" ? niftyPrice : sensexPrice;
-    const dtStr = lastCandle.date.includes(" ") ? lastCandle.date.replace(" ", "T") : lastCandle.date;
-    const ts = Math.floor(Date.parse(dtStr) / 1000);
-    const timeVal = (isNaN(ts) ? lastCandle.date : ts) as Time;
-
-    try {
-      candleSeriesRef.current.update({
-        time: timeVal,
-        open: lastCandle.open,
-        high: Math.max(lastCandle.high, currentPrice),
-        low: Math.min(lastCandle.low, currentPrice),
-        close: currentPrice,
-      });
-    } catch (e) {
-      // ignore scale mismatch during switches
-    }
-  }, [niftyPrice, sensexPrice, selectedIndex, marketData]);
 
   // Dynamic ticking countdown for market opens/closes in IST
   useEffect(() => {
@@ -522,6 +482,31 @@ export default function MarketIntelligencePage() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden h-full font-body">
+      {/* Truthfulness & Data Integrity Status Banner */}
+      {marketData?.status && marketData.status !== "available" && (
+        <div className={`px-4 py-2 text-xs font-medium flex items-center justify-between border-b shrink-0 ${
+          marketData.status === "unavailable"
+            ? "bg-amber-50 text-amber-950 border-amber-200"
+            : "bg-blue-50 text-blue-950 border-blue-200"
+        }`}>
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined !text-base text-amber-600">
+              {marketData.status === "unavailable" ? "cloud_off" : "warning"}
+            </span>
+            <span>
+              {marketData.status === "unavailable"
+                ? "Live market feed currently unavailable from primary provider. Synthetic fallbacks are disabled to ensure financial integrity."
+                : "Degraded market feed: Some index feeds or market breadth components are currently unresolvable."}
+            </span>
+          </div>
+          {marketData.as_of && (
+            <span className="text-[10px] font-mono opacity-80">
+              Source: {marketData.source || "Yahoo Finance"} • As of: {new Date(marketData.as_of).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Dynamic Workspace Container */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         
@@ -570,10 +555,10 @@ export default function MarketIntelligencePage() {
               {/* Live Ticking Index Price */}
               <div className="flex items-baseline gap-2 border-r border-[#c3c6d7] pr-4">
                 <span className="font-mono text-sm font-bold text-[#191b23]">
-                  {currentIndexPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {typeof currentIndexPrice === "number" ? currentIndexPrice.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}
                 </span>
-                <span className={`font-mono text-[11px] font-bold ${currentIndexChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
-                  {currentIndexChange >= 0 ? "+" : ""}{currentIndexChange.toFixed(2)}%
+                <span className={`font-mono text-[11px] font-bold ${typeof currentIndexChange === "number" ? (currentIndexChange >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]") : "text-[#737686]"}`}>
+                  {typeof currentIndexChange === "number" ? `${currentIndexChange >= 0 ? "+" : ""}${currentIndexChange.toFixed(2)}%` : "—"}
                 </span>
               </div>
               
@@ -641,7 +626,7 @@ export default function MarketIntelligencePage() {
             {/* Chart Container for Lightweight Charts */}
             <div ref={chartContainerRef} className="w-full h-full flex-1 relative min-h-0" />
             
-            {!marketData && (
+            {loading && !marketData && (
               <div className="absolute inset-0 bg-white z-20 p-6 flex flex-col justify-between pointer-events-none select-none">
                 <div className="flex-1 border-b border-l border-slate-200/80 relative bg-slate-50/30 rounded p-4 flex flex-col justify-between animate-pulse">
                   <div className="w-full h-[1px] bg-slate-100"></div>
@@ -649,6 +634,16 @@ export default function MarketIntelligencePage() {
                   <div className="w-full h-[1px] bg-slate-100"></div>
                   <div className="w-full h-[1px] bg-slate-100"></div>
                 </div>
+              </div>
+            )}
+
+            {!loading && (!marketData || marketData.status === "unavailable" || rawCandles.length === 0) && (
+              <div className="absolute inset-0 bg-[#faf8ff]/90 z-20 p-6 flex flex-col items-center justify-center text-center select-none">
+                <span className="material-symbols-outlined text-[#737686] !text-4xl mb-2">query_stats</span>
+                <p className="text-sm font-bold text-[#191b23]">Candlestick Data Unavailable</p>
+                <p className="text-xs text-[#737686] max-w-sm mt-1">
+                  Historical candles could not be resolved from the market data provider. Synthetic price movements are disabled.
+                </p>
               </div>
             )}
             
@@ -661,19 +656,14 @@ export default function MarketIntelligencePage() {
                 low: lastCandle.low,
                 close: lastCandle.close,
                 volume: lastCandle.volume,
-                change: lastCandle.open ? ((lastCandle.close - lastCandle.open) / lastCandle.open) * 100 : currentIndexChange
-              } : {
-                time: "Live",
-                open: currentIndexPrice * 0.998,
-                high: currentIndexPrice * 1.002,
-                low: currentIndexPrice * 0.995,
-                close: currentIndexPrice,
-                volume: 0,
-                change: currentIndexChange
-              });
+                change: lastCandle.open ? ((lastCandle.close - lastCandle.open) / lastCandle.open) * 100 : (typeof currentIndexChange === "number" ? currentIndexChange : 0)
+              } : null);
 
-              const isPositive = activeData.change >= 0;
-              const isFlat = activeData.change === 0;
+              if (!activeData) return null;
+
+              const hasChange = typeof activeData.change === "number";
+              const isPositive = hasChange && (activeData.change as number) > 0;
+              const isFlat = !hasChange || activeData.change === 0;
 
               return (
                 <div className="absolute top-4 left-4 bg-white/90 border border-[#c3c6d7] p-2.5 rounded shadow-sm backdrop-blur-sm z-10 max-w-[240px] pointer-events-none select-none">
@@ -681,14 +671,14 @@ export default function MarketIntelligencePage() {
                     DATA: {activeData.time}
                   </p>
                   <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono text-[11px]">
-                    <span className="text-[#434655]">O: <span className="font-semibold text-[#191b23]">{activeData.open.toFixed(2)}</span></span>
-                    <span className="text-[#434655]">H: <span className="font-semibold text-[#191b23]">{activeData.high.toFixed(2)}</span></span>
-                    <span className="text-[#434655]">L: <span className="font-semibold text-[#191b23]">{activeData.low.toFixed(2)}</span></span>
-                    <span className="text-[#434655]">C: <span className="font-semibold text-[#004ac6]">{activeData.close.toFixed(2)}</span></span>
+                    <span className="text-[#434655]">O: <span className="font-semibold text-[#191b23]">{typeof activeData.open === "number" ? activeData.open.toFixed(2) : "—"}</span></span>
+                    <span className="text-[#434655]">H: <span className="font-semibold text-[#191b23]">{typeof activeData.high === "number" ? activeData.high.toFixed(2) : "—"}</span></span>
+                    <span className="text-[#434655]">L: <span className="font-semibold text-[#191b23]">{typeof activeData.low === "number" ? activeData.low.toFixed(2) : "—"}</span></span>
+                    <span className="text-[#434655]">C: <span className="font-semibold text-[#004ac6]">{typeof activeData.close === "number" ? activeData.close.toFixed(2) : "—"}</span></span>
                     <span className="col-span-2 text-[#434655] mt-0.5 pt-0.5 border-t border-[#e7e7f3] flex justify-between">
                       <span>CHG:</span> 
                       <span className={`font-semibold ${isFlat ? "text-[#737686]" : (isPositive ? "text-[#10b981]" : "text-[#ba1a1a]")}`}>
-                        {isFlat ? "—" : `${isPositive ? "+" : ""}${activeData.change.toFixed(2)}%`}
+                        {hasChange ? (isFlat ? "—" : `${isPositive ? "+" : ""}${(activeData.change as number).toFixed(2)}%`) : "—"}
                       </span>
                     </span>
                   </div>
@@ -706,9 +696,15 @@ export default function MarketIntelligencePage() {
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-[11px] font-bold text-[#191b23] uppercase tracking-wider">Market Breadth</h3>
               {marketData ? (
-                <span className="text-[10px] text-[#10b981] font-bold font-mono">
-                  {marketData.breadth.advancing || 0} ADV / {marketData.breadth.declining || 0} DEC
-                </span>
+                marketData.breadth.status === "unavailable" || marketData.breadth.advancing === null ? (
+                  <span className="text-[10px] text-[#737686] font-mono">
+                    Unavailable
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-[#10b981] font-bold font-mono">
+                    {marketData.breadth.advancing} ADV / {marketData.breadth.declining || 0} DEC
+                  </span>
+                )
               ) : (
                 <div className="w-20 h-3.5 bg-slate-100 rounded animate-pulse"></div>
               )}
@@ -717,6 +713,12 @@ export default function MarketIntelligencePage() {
               <div className="grid grid-cols-5 gap-1 animate-pulse">
                 {Array.from({ length: 10 }).map((_, idx) => (
                   <div key={idx} className="aspect-square rounded-sm bg-slate-200/60"></div>
+                ))}
+              </div>
+            ) : marketData.breadth.status === "unavailable" || marketData.breadth.advancing === null ? (
+              <div className="grid grid-cols-5 gap-1">
+                {Array.from({ length: 10 }).map((_, idx) => (
+                  <div key={idx} className="aspect-square rounded-sm bg-slate-200/50" title="Breadth data unavailable"></div>
                 ))}
               </div>
             ) : (
@@ -755,20 +757,28 @@ export default function MarketIntelligencePage() {
               </div>
             ) : (
               <div className="space-y-3 max-h-[160px] overflow-y-auto custom-scrollbar pr-1">
-                {marketData.sectors.map((sec, idx) => (
-                  <div key={idx} className="flex items-center gap-3">
-                    <span className="text-xs font-semibold text-[#434655] flex-1 truncate uppercase">{sec.name}</span>
-                    <div className="w-20 h-1.5 bg-[#e7e7f3] rounded-full overflow-hidden shrink-0">
-                      <div 
-                        className={`h-full ${sec.change >= 0 ? "bg-[#10b981]" : "bg-[#ba1a1a]"}`} 
-                        style={{ width: `${Math.min(100, Math.max(15, Math.abs(sec.change) * 20))}%` }}
-                      ></div>
+                {marketData.sectors.map((sec, idx) => {
+                  const hasChange = typeof sec.change === "number";
+                  const isPositive = hasChange && (sec.change as number) >= 0;
+                  return (
+                    <div key={idx} className="flex items-center gap-3">
+                      <span className="text-xs font-semibold text-[#434655] flex-1 truncate uppercase">{sec.name}</span>
+                      <div className="w-20 h-1.5 bg-[#e7e7f3] rounded-full overflow-hidden shrink-0">
+                        {hasChange ? (
+                          <div 
+                            className={`h-full ${isPositive ? "bg-[#10b981]" : "bg-[#ba1a1a]"}`} 
+                            style={{ width: `${Math.min(100, Math.max(15, Math.abs(sec.change as number) * 20))}%` }}
+                          ></div>
+                        ) : (
+                          <div className="h-full bg-slate-200 w-full"></div>
+                        )}
+                      </div>
+                      <span className={`text-[10px] font-mono font-bold w-10 text-right shrink-0 ${hasChange ? (isPositive ? "text-[#10b981]" : "text-[#ba1a1a]") : "text-[#737686]"}`}>
+                        {hasChange ? `${isPositive ? "+" : ""}${(sec.change as number).toFixed(2)}%` : "—"}
+                      </span>
                     </div>
-                    <span className={`text-[10px] font-mono font-bold w-10 text-right shrink-0 ${sec.change >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
-                      {sec.change >= 0 ? "+" : ""}{sec.change.toFixed(2)}%
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -916,12 +926,13 @@ export default function MarketIntelligencePage() {
                 step="0.05"
                 id="orderPrice"
                 className="w-full bg-[#f3f3fe] border border-[#c3c6d7] rounded px-3 py-1.5 text-xs text-[#191b23] focus:border-[#004ac6] focus:ring-1 focus:ring-[#004ac6] outline-none font-mono font-semibold"
-                value={currentIndexPrice}
+                value={currentIndexPrice ?? ""}
                 onChange={(e) => {
+                  const val = parseFloat(e.target.value);
                   if (selectedIndex === "NIFTY") {
-                    setNiftyPrice(parseFloat(e.target.value) || 24000);
+                    setNiftyPrice(isNaN(val) ? null : val);
                   } else {
-                    setSensexPrice(parseFloat(e.target.value) || 76000);
+                    setSensexPrice(isNaN(val) ? null : val);
                   }
                 }}
               />
@@ -933,7 +944,8 @@ export default function MarketIntelligencePage() {
                 const symInput = document.getElementById("orderSymbol") as HTMLInputElement;
                 const qty = qtyInput ? qtyInput.value : "50";
                 const symbol = symInput ? symInput.value : "NIFTY 50";
-                setOrderSubmitted(`${orderType} ${qty} qty of ${symbol} @ ₹${currentIndexPrice.toFixed(2)} — Order queued.`);
+                const priceFormatted = typeof currentIndexPrice === "number" ? `₹${currentIndexPrice.toFixed(2)}` : "Market Price";
+                setOrderSubmitted(`${orderType} ${qty} qty of ${symbol} @ ${priceFormatted} — Order queued.`);
                 setTimeout(() => {
                   setOrderSubmitted(null);
                   const modal = document.getElementById("tradeModal");

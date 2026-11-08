@@ -71,9 +71,6 @@ def setup_app_logging() -> logging.Logger:
 
 logger = setup_app_logging()
 
-# Import monkey patch from master_copilot to ensure rate-limit resilience for all Gemini calls
-from features.master_copilot import setup_monkey_patch
-setup_monkey_patch(logger)
 
 _db_cache = None
 _db_lock = threading.Lock()

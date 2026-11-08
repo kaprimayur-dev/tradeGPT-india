@@ -25,6 +25,13 @@ def run_backtest(payload: BacktestRequest, request: Request):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Stock symbol cannot be empty."
         )
+
+    if payload.initial_capital <= 0:
+        logger.error(f"Invalid initial capital: {payload.initial_capital}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Initial capital must be greater than zero."
+        )
         
     try:
         logger.info(f"START: Backtest simulation for {payload.symbol} ({payload.strategy})")
@@ -54,6 +61,12 @@ def run_backtest(payload: BacktestRequest, request: Request):
         return result
     except HTTPException:
         raise
+    except ValueError as ve:
+        logger.error(f"Validation error during backtest: {str(ve)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve)
+        )
     except Exception as e:
         logger.error(f"Unexpected error during backtest endpoint: {str(e)}", exc_info=True)
         raise HTTPException(

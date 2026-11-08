@@ -19,7 +19,8 @@ class BacktestRequest(BaseModel):
     )
     initial_capital: float = Field(
         100000.0,
-        description="Starting cash capital for the portfolio.",
+        gt=0,
+        description="Starting cash capital for the portfolio. Must be greater than zero.",
         examples=[100000.0]
     )
 

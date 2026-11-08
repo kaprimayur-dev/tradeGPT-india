@@ -26,6 +26,7 @@ import yfinance as yf
 import pandas as pd
 import math
 from langchain_community.vectorstores import Chroma
+from core.gemini_client import call_gemini, GeminiClientError
 
 # Import existing RAG query and retrieval methods
 from rag.query import (
@@ -254,7 +255,7 @@ def generate_realtime_intelligence_report_data(
     logger.info("Retrieving historical macro context from ChromaDB...")
     retrieval_query = f"macroeconomics, external dependencies, currency risk, and geopolitical factors affecting {company_name}"
     
-    retrieved_results = retrieve_relevant_chunks(retrieval_query, db, k=5, logger=logger)
+    retrieved_results = retrieve_relevant_chunks(retrieval_query, db, k=5, logger=logger, company_name=company_name)
     
     # 3. Format RAG context
     macro_context_str = ""
@@ -295,15 +296,14 @@ def generate_realtime_intelligence_report_data(
     # 6. Invoke Gemini LLM for real-time + macro synthesis
     logger.info(f"START: Gemini generation for Realtime Intelligence ({company_name})")
     start_g = time.time()
-    model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-    response = model.generate_content(prompt, request_options={"timeout": 15})
+    report_text = call_gemini(prompt, log=logger)
     logger.info(f"END: Gemini generation for Realtime Intelligence ({company_name}) ({time.time() - start_g:.2f} sec)")
     
     # 7. Extract RAG sources
     sources = extract_sources(retrieved_results)
     
     return {
-        "report": response.text.strip(),
+        "report": report_text.strip(),
         "sources": sources,
         "realtime_data": realtime_data
     }
@@ -344,13 +344,13 @@ def fetch_market_snapshot(
     logger.info(f"fetch_market_snapshot invoked for key {cache_key} - cache missed or expired")
     
     indices = {
-        "NIFTY": {"price": 24000.0, "change": 0.0},
-        "SENSEX": {"price": 76800.0, "change": 0.0},
-        "BANKNIFTY": {"price": 52000.0, "change": 0.0},
-        "USDINR": {"price": 83.5, "change": 0.0},
-        "GOLD": {"price": 2350.0, "change": 0.0},
-        "CRUDE": {"price": 80.0, "change": 0.0},
-        "VIX": {"price": 13.5, "change": 0.0}
+        "NIFTY": {"price": None, "change": None},
+        "SENSEX": {"price": None, "change": None},
+        "BANKNIFTY": {"price": None, "change": None},
+        "USDINR": {"price": None, "change": None},
+        "GOLD": {"price": None, "change": None},
+        "CRUDE": {"price": None, "change": None},
+        "VIX": {"price": None, "change": None}
     }
     
     indices_mapping = {
@@ -408,15 +408,16 @@ def fetch_market_snapshot(
                     if len(hist) > 1:
                         prev = float(hist.iloc[-2])
                         curr = float(hist.iloc[-1])
-                        indices[key]["change"] = round(((curr - prev) / prev) * 100, 2)
+                        if prev > 0:
+                            indices[key]["change"] = round(((curr - prev) / prev) * 100, 2)
         except Exception as e:
             logger.error(f"Error parsing index {key} from batch: {str(e)}")
 
-    # Watchlist price compiler
+    # Watchlist price compiler (truthful: null when unavailable, no 1000.0 defaults)
     watchlist_prices = {}
     for sym in watchlist:
         suffix_sym = f"{sym.upper()}.NS" if not sym.endswith(".NS") and not sym.endswith(".BO") and "=" not in sym else sym.upper()
-        watchlist_prices[sym.upper()] = {"price": 1000.0, "change": 0.0, "sparkline": []}
+        watchlist_prices[sym.upper()] = {"price": None, "change": None, "sparkline": []}
         try:
             if df is not None and suffix_sym in df:
                 hist = df[suffix_sym]["Close"].dropna()
@@ -425,7 +426,8 @@ def fetch_market_snapshot(
                     if len(hist) > 1:
                         prev = float(hist.iloc[-2])
                         curr = float(hist.iloc[-1])
-                        watchlist_prices[sym.upper()]["change"] = round(((curr - prev) / prev) * 100, 2)
+                        if prev > 0:
+                            watchlist_prices[sym.upper()]["change"] = round(((curr - prev) / prev) * 100, 2)
                     
                     # Extract last 5 closes for sparkline
                     closes_list = hist.tail(5).tolist()
@@ -466,102 +468,67 @@ def fetch_market_snapshot(
         except Exception as e:
             logger.error(f"Error parsing history for {key}: {str(e)}")
 
-    # Generate fallback history if yfinance fails
-    for key in ["NIFTY", "SENSEX"]:
-        if not history[key]:
-            base_price = indices[key]["price"]
-            import random
-            random.seed(42)
-            current_date = datetime.datetime.now()
-            
-            delta = datetime.timedelta(days=1)
-            if interval == "1m":
-                delta = datetime.timedelta(minutes=1)
-            elif interval == "5m":
-                delta = datetime.timedelta(minutes=5)
-            elif interval == "15m":
-                delta = datetime.timedelta(minutes=15)
-            elif interval == "1h":
-                delta = datetime.timedelta(hours=1)
-                
-            for i in range(15):
-                candle_date = current_date - delta * (15 - i)
-                date_str = candle_date.strftime("%Y-%m-%d %H:%M")
-                change_pct = (random.random() - 0.48) * 0.015
-                open_val = base_price * (1.0 + change_pct)
-                close_val = base_price * (1.0 + change_pct + (random.random() - 0.5) * 0.01)
-                high_val = max(open_val, close_val) * (1.0 + random.random() * 0.005)
-                low_val = min(open_val, close_val) * (1.0 - random.random() * 0.005)
-                history[key].append({
-                    "date": date_str,
-                    "open": round(open_val, 2),
-                    "high": round(high_val, 2),
-                    "low": round(low_val, 2),
-                    "close": round(close_val, 2),
-                    "volume": random.randint(100000, 500000)
-                })
+    # TG-002: NO fake random-walk candle history! Leave history empty if provider failed.
             
     advancing = 0
     declining = 0
     unchanged = 0
+    tickers_evaluated = 0
     for sym in sample_tickers:
         try:
             if df is not None and sym in df:
                 hist = df[sym]["Close"].dropna()
                 if len(hist) > 1:
                     change = float(hist.iloc[-1] - hist.iloc[-2])
+                    tickers_evaluated += 1
                     if change > 0.01:
                         advancing += 1
                     elif change < -0.01:
                         declining += 1
                     else:
                         unchanged += 1
-                else:
-                    unchanged += 1
-            else:
-                unchanged += 1
         except Exception as e:
             logger.error(f"Error checking breadth ticker {sym} from batch: {str(e)}")
             
-    if advancing == 0 and declining == 0:
-        advancing = 13
-        declining = 9
-        unchanged = 3
-        
-    breadth = {"advancing": advancing, "declining": declining, "unchanged": unchanged}
+    if tickers_evaluated > 0:
+        breadth = {
+            "advancing": advancing,
+            "declining": declining,
+            "unchanged": unchanged,
+            "status": "available",
+            "sample_size": tickers_evaluated
+        }
+    else:
+        # TG-002: Truthful breadth state when feed fails (no hardcoded 13/9/3)
+        breadth = {
+            "advancing": None,
+            "declining": None,
+            "unchanged": None,
+            "status": "unavailable",
+            "sample_size": 0
+        }
     
     sectors = []
-    sector_fallbacks = {
-        "Financial Services": 0.42,
-        "Information Technology": -0.85,
-        "Oil, Gas & Consumable Fuels": 0.15,
-        "Fast Moving Consumer Goods": -0.22,
-        "Automobile & Auto Components": 1.18,
-        "Healthcare": 0.35,
-        "Metals & Mining": -1.45,
-        "Infrastructure": 0.62
-    }
     for name, (ticker_symbol, weight) in sector_mapping.items():
-        change_val = 0.0
+        change_val = None
+        sector_status = "unavailable"
         try:
             if df is not None and ticker_symbol in df:
                 hist = df[ticker_symbol]["Close"].dropna()
                 if len(hist) > 1:
                     prev = float(hist.iloc[-2])
                     curr = float(hist.iloc[-1])
-                    change_val = round(((curr - prev) / prev) * 100, 2)
-                else:
-                    change_val = sector_fallbacks.get(name, 0.05)
-            else:
-                change_val = sector_fallbacks.get(name, 0.05)
+                    if prev > 0:
+                        change_val = round(((curr - prev) / prev) * 100, 2)
+                        sector_status = "available"
         except Exception as e:
             logger.error(f"Error parsing sector {name} from batch: {str(e)}")
-            change_val = sector_fallbacks.get(name, 0.1)
             
         sectors.append({
             "name": name,
             "weight": weight,
-            "change": change_val
+            "change": change_val,
+            "status": sector_status
         })
         
     news_articles = []
@@ -631,27 +598,38 @@ def fetch_market_snapshot(
     except Exception as e:
         logger.error(f"Failed to fetch market news from Nifty: {str(e)}")
         
-    if not news_articles:
-        fallback_headlines = [
-            ("FIIs remain net buyers in Indian equities; domestic inflows solid", "Economic Times", "The Indian benchmark indices showed high volatility but managed to defend key support levels. FMCG and Pharma led gains."),
-            ("RBI Governor hints at calibrated stance on interest rate decisions", "Business Standard", "Central bank comments point to sustained growth focus. Yields remain stable across corporate papers."),
-            ("Nifty IT index rebounds as global tech spending shows resilience", "LiveMint", "IT majors saw fresh institutional bidding on expectations of stable Q1 contract pipelines."),
-            ("Reliance and HDFC Bank lead morning volume charts with institutional block trades", "Bloomberg India", "Heavy active trading witnessed in index heavyweights during early trading hours."),
-            ("GST collections rise 11% YoY, indicating strong macro economic indicators", "CNBC TV18", "Indian fiscal indicators point to robust consumer demand and strong tax compliance.")
-        ]
-        current_time = datetime.datetime.now()
-        for idx, (title, pub, summ) in enumerate(fallback_headlines):
-            staggered_time = current_time - datetime.timedelta(hours=idx + 1)
-            news_articles.append({
-                "title": title,
-                "publisher": pub,
-                "date": staggered_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "link": "https://economictimes.indiatimes.com",
-                "summary": summ
-            })
-        
+    # TG-002: NO fabricated headlines or fake publisher attributions!
+    # If news is unavailable, news_articles stays empty: []
+    
+    # Assess overall market data quality status
+    has_nifty = indices["NIFTY"]["price"] is not None
+    has_sensex = indices["SENSEX"]["price"] is not None
+    has_news = len(news_articles) > 0
+    has_history = len(history["NIFTY"]) > 0 or len(history["SENSEX"]) > 0
+    
+    if has_nifty and has_sensex and has_history and has_news:
+        market_status = "available"
+        is_success = True
+    elif has_nifty or has_sensex or has_news or has_history:
+        market_status = "degraded"
+        is_success = True
+    else:
+        market_status = "unavailable"
+        is_success = False
+
+    # Extract latest provider quote time from candles if available
+    latest_quote_time = None
+    if history.get("NIFTY") and len(history["NIFTY"]) > 0:
+        latest_quote_time = history["NIFTY"][-1]["date"]
+    elif history.get("SENSEX") and len(history["SENSEX"]) > 0:
+        latest_quote_time = history["SENSEX"][-1]["date"]
+
     response = {
-        "success": True,
+        "success": is_success,
+        "status": market_status,
+        "source": "Yahoo Finance",
+        "as_of": latest_quote_time,  # Provider quote timestamp (distinct from server fetch time)
+        "retrieval_timestamp": datetime.datetime.now().isoformat(),  # Server retrieval timestamp
         "indices": indices,
         "breadth": breadth,
         "sectors": sectors,
@@ -661,8 +639,14 @@ def fetch_market_snapshot(
         "watchlist": watchlist_prices
     }
     
-    with _market_data_lock:
-        _market_data_cache[cache_key] = (response, time.time())
+    # Only cache valid or partially valid responses; NEVER cache complete provider outages
+    if market_status != "unavailable":
+        with _market_data_lock:
+            # Bound cache size to 50 entries
+            if len(_market_data_cache) > 50:
+                oldest_k = min(_market_data_cache.keys(), key=lambda k: _market_data_cache[k][1])
+                del _market_data_cache[oldest_k]
+            _market_data_cache[cache_key] = (response, time.time())
         
     return response
 

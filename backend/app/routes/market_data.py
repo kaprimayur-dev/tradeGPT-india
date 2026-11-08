@@ -31,11 +31,7 @@ def get_market_data(
             period=period,
             watchlist=watchlist_list
         )
-        if not result["success"]:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to retrieve market data."
-            )
+        # Even if provider data is unavailable or degraded, return structured response
         return result
     except HTTPException:
         raise

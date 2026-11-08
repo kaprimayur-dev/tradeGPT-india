@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
-import { api } from "../app/api";
+import { api, IndexTicker } from "../app/api";
 
 interface SidebarProps {
   collapsed?: boolean;
@@ -19,7 +19,7 @@ export default function Sidebar({ collapsed = false, onToggleCollapse }: Sidebar
   const [deskDropdownOpen, setDeskDropdownOpen] = useState(false);
 
   const [watchlistTickers, setWatchlistTickers] = useState<string[]>(["RELIANCE", "HDFCBANK", "TCS"]);
-  const [watchlistData, setWatchlistData] = useState<Record<string, { price: number; change: number; sparkline?: number[] }>>({});
+  const [watchlistData, setWatchlistData] = useState<Record<string, IndexTicker>>({});
 
   useEffect(() => {
     setMounted(true);
@@ -263,8 +263,8 @@ export default function Sidebar({ collapsed = false, onToggleCollapse }: Sidebar
             ) : (
               watchlistTickers.map((ticker) => {
                 const data = watchlistData[ticker.toUpperCase()];
-                const price = data ? data.price : null;
-                const change = data ? data.change : null;
+                const price = data && typeof data.price === "number" ? data.price : null;
+                const change = data && typeof data.change === "number" ? data.change : null;
                 const sparkline = data?.sparkline || [];
                 const isPositive = change !== null && change > 0;
                 const isFlat = change === null || change === 0;

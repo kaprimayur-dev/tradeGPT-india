@@ -9,10 +9,12 @@ export default function InstitutionalResearchPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Bind values from API
-  const [recommendation, setRecommendation] = useState<string>("—");
-  const [targetPrice, setTargetPrice] = useState<number>(0);
-  const [upside, setUpside] = useState<number>(0);
+  const [recommendation, setRecommendation] = useState<string | null>("—");
+  const [targetPrice, setTargetPrice] = useState<number | null>(null);
+  const [upside, setUpside] = useState<number | null>(null);
   const [report, setReport] = useState<string | null>(null);
+  const [dataStatus, setDataStatus] = useState<string>("available");
+  const [dataSource, setDataSource] = useState<string>("Yahoo Finance / Disclosures");
   
   const [growthDrivers, setGrowthDrivers] = useState<{ title: string; icon: string; desc: string }[]>([]);
 
@@ -20,26 +22,39 @@ export default function InstitutionalResearchPage() {
 
   const [citations, setCitations] = useState<{ title: string; meta: string }[]>([]);
 
-  const [technicalMetrics, setTechnicalMetrics] = useState({
-    rsi: 0,
-    sma_50: 0,
-    sma_200: 0,
+  const [technicalMetrics, setTechnicalMetrics] = useState<{
+    rsi?: number | null;
+    sma_50?: number | null;
+    sma_200?: number | null;
+    volume?: string | null;
+    vwap?: number | null;
+  }>({
+    rsi: null,
+    sma_50: null,
+    sma_200: null,
     volume: "—",
-    vwap: 0
+    vwap: null
   });
 
-  const [ownership, setOwnership] = useState({
-    promoter: 0,
-    fii: 0,
-    dii: 0,
-    public: 0
+  const [ownership, setOwnership] = useState<{
+    promoter?: number | null;
+    fii?: number | null;
+    dii?: number | null;
+    public?: number | null;
+    status?: string;
+  }>({
+    promoter: null,
+    fii: null,
+    dii: null,
+    public: null,
+    status: "available"
   });
 
-  const [price, setPrice] = useState<number>(0);
-  const [change, setChange] = useState<number>(0);
+  const [price, setPrice] = useState<number | null>(null);
+  const [change, setChange] = useState<number | null>(null);
   const [mktCap, setMktCap] = useState<string>("—");
-  const [peRatio, setPeRatio] = useState<number>(0);
-  const [beta, setBeta] = useState<number>(0);
+  const [peRatio, setPeRatio] = useState<number | null>(null);
+  const [beta, setBeta] = useState<number | null>(null);
   const [timestamp, setTimestamp] = useState<string>("—");
 
   const runSearch = async (symbol: string) => {
@@ -47,48 +62,51 @@ export default function InstitutionalResearchPage() {
     setLoading(true);
     setError(null);
     setRecommendation("—");
-    setTargetPrice(0);
-    setUpside(0);
+    setTargetPrice(null);
+    setUpside(null);
     setReport(null);
     setGrowthDrivers([]);
     setRiskFactors([]);
     setCitations([]);
     setTechnicalMetrics({
-      rsi: 0,
-      sma_50: 0,
-      sma_200: 0,
+      rsi: null,
+      sma_50: null,
+      sma_200: null,
       volume: "—",
-      vwap: 0
+      vwap: null
     });
     setOwnership({
-      promoter: 0,
-      fii: 0,
-      dii: 0,
-      public: 0
+      promoter: null,
+      fii: null,
+      dii: null,
+      public: null,
+      status: "available"
     });
-    setPrice(0);
-    setChange(0);
+    setPrice(null);
+    setChange(null);
     setMktCap("—");
-    setPeRatio(0);
-    setBeta(0);
+    setPeRatio(null);
+    setBeta(null);
     setTimestamp("—");
     try {
       const res = await api.getStockResearch(symbol);
       if (res.success) {
-        setRecommendation(res.recommendation);
-        setTargetPrice(res.target_price);
-        setUpside(res.upside);
+        setRecommendation(res.recommendation ?? null);
+        setTargetPrice(typeof res.target_price === "number" ? res.target_price : null);
+        setUpside(typeof res.upside === "number" ? res.upside : null);
         setReport(res.report);
+        setDataStatus(res.status || "available");
+        setDataSource(res.source || "Yahoo Finance / Disclosures");
         setGrowthDrivers(res.growth_drivers || []);
         setRiskFactors(res.risk_matrix || []);
         setCitations(res.citations || []);
-        setTechnicalMetrics(res.technical_metrics);
-        setOwnership(res.ownership);
-        setPrice(res.price);
-        setChange(res.change);
-        setMktCap(res.mkt_cap);
-        setPeRatio(res.pe_ratio);
-        setBeta(res.beta);
+        setTechnicalMetrics(res.technical_metrics || {});
+        setOwnership(res.ownership || {});
+        setPrice(typeof res.price === "number" ? res.price : null);
+        setChange(typeof res.change === "number" ? res.change : null);
+        setMktCap(res.mkt_cap || "—");
+        setPeRatio(typeof res.pe_ratio === "number" ? res.pe_ratio : null);
+        setBeta(typeof res.beta === "number" ? res.beta : null);
         if (res.timestamp) {
           try {
             const date = new Date(res.timestamp);
@@ -223,10 +241,10 @@ export default function InstitutionalResearchPage() {
                 </h2>
                 <div className="flex items-center gap-3 mt-2 text-xs flex-wrap">
                   <span className="font-bold text-[#191b23] font-mono bg-slate-100 border px-2 py-0.5 rounded">
-                    Price: ₹{price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    Price: {price !== null ? `₹${price.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : "—"}
                   </span>
-                  <span className={`font-semibold font-mono px-2 py-0.5 rounded ${change >= 0 ? "bg-green-50 text-[#10b981] border-green-200" : "bg-red-50 text-[#ba1a1a] border-red-200"} border`}>
-                    {change >= 0 ? "+" : ""}{change.toFixed(2)}%
+                  <span className={`font-semibold font-mono px-2 py-0.5 rounded ${typeof change === "number" ? (change >= 0 ? "bg-green-50 text-[#10b981] border-green-200" : "bg-red-50 text-[#ba1a1a] border-red-200") : "bg-slate-50 text-slate-600 border-slate-200"} border`}>
+                    {typeof change === "number" ? `${change >= 0 ? "+" : ""}${change.toFixed(2)}%` : "—"}
                   </span>
                   <span className="text-[#737686] font-mono">
                     Mkt Cap: {mktCap}
@@ -235,10 +253,18 @@ export default function InstitutionalResearchPage() {
                     P/E: {peRatio ? peRatio.toFixed(1) : "N/A"}x
                   </span>
                   <span className="text-[#737686] font-mono">
-                    Beta: {beta.toFixed(2)}
+                    Beta: {typeof beta === "number" ? beta.toFixed(2) : "—"}
                   </span>
                 </div>
               </div>
+
+              {/* Data Freshness & Truthfulness Notice */}
+              {dataStatus && dataStatus !== "available" && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 flex items-center gap-2 font-mono">
+                  <span className="material-symbols-outlined !text-base text-amber-700">info</span>
+                  <span>Data Status: <strong>{dataStatus.toUpperCase()}</strong>. Unverified values are omitted rather than simulated to guarantee integrity. Source: {dataSource}.</span>
+                </div>
+              )}
 
               {/* Executive Summary */}
               <section>
@@ -253,16 +279,18 @@ export default function InstitutionalResearchPage() {
                 <div className="grid grid-cols-3 gap-4 py-4 border-y border-[#c3c6d7] font-mono mt-4">
                   <div className="flex flex-col">
                     <span className="text-[9px] text-[#737686] uppercase font-bold">Recommendation</span>
-                    <span className="text-[#004ac6] font-bold text-sm uppercase">{recommendation}</span>
+                    <span className="text-[#004ac6] font-bold text-sm uppercase">{recommendation || "Not Disclosed"}</span>
                   </div>
                   <div className="flex flex-col">
                     <span className="text-[9px] text-[#737686] uppercase font-bold">Price Target (12M)</span>
-                    <span className="text-[#191b23] font-bold text-sm">₹{targetPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                    <span className="text-[#191b23] font-bold text-sm">
+                      {typeof targetPrice === "number" && targetPrice > 0 ? `₹${targetPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : "Not Disclosed"}
+                    </span>
                   </div>
                   <div className="flex flex-col">
                     <span className="text-[9px] text-[#737686] uppercase font-bold">Upside</span>
-                    <span className={`font-bold text-sm ${upside >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]"}`}>
-                      {upside >= 0 ? "+" : ""}{upside.toFixed(1)}%
+                    <span className={`font-bold text-sm ${typeof upside === "number" ? (upside >= 0 ? "text-[#10b981]" : "text-[#ba1a1a]") : "text-[#737686]"}`}>
+                      {typeof upside === "number" ? `${upside >= 0 ? "+" : ""}${upside.toFixed(1)}%` : "Not Disclosed"}
                     </span>
                   </div>
                 </div>
@@ -346,27 +374,37 @@ export default function InstitutionalResearchPage() {
                   <div className="flex items-center justify-between border-b border-border-subtle/30 pb-2">
                     <span className="text-xs text-text-muted font-medium">RSI (14-Day)</span>
                     <div className="flex items-center gap-2">
-                      <span className="font-mono font-bold text-text-primary">{technicalMetrics.rsi.toFixed(2)}</span>
-                      <div className="w-12 h-1.5 bg-border-subtle/30 rounded-full overflow-hidden shrink-0">
-                        <span className="block h-full bg-primary" style={{ width: `${Math.min(100, Math.max(0, technicalMetrics.rsi))}%` }}></span>
-                      </div>
+                      <span className="font-mono font-bold text-text-primary">
+                        {typeof technicalMetrics.rsi === "number" ? technicalMetrics.rsi.toFixed(2) : "—"}
+                      </span>
+                      {typeof technicalMetrics.rsi === "number" && (
+                        <div className="w-12 h-1.5 bg-border-subtle/30 rounded-full overflow-hidden shrink-0">
+                          <span className="block h-full bg-primary" style={{ width: `${Math.min(100, Math.max(0, technicalMetrics.rsi))}%` }}></span>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center justify-between border-b border-border-subtle/30 pb-2">
                     <span className="text-xs text-text-muted font-medium">50-Day Moving Avg</span>
-                    <span className="font-mono font-bold text-text-primary">₹{technicalMetrics.sma_50.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                    <span className="font-mono font-bold text-text-primary">
+                      {typeof technicalMetrics.sma_50 === "number" ? `₹${technicalMetrics.sma_50.toLocaleString(undefined, {minimumFractionDigits: 2})}` : "—"}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between border-b border-border-subtle/30 pb-2">
                     <span className="text-xs text-text-muted font-medium">200-Day Moving Avg</span>
-                    <span className="font-mono font-bold text-text-primary">₹{technicalMetrics.sma_200.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                    <span className="font-mono font-bold text-text-primary">
+                      {typeof technicalMetrics.sma_200 === "number" ? `₹${technicalMetrics.sma_200.toLocaleString(undefined, {minimumFractionDigits: 2})}` : "—"}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between border-b border-border-subtle/30 pb-2">
                     <span className="text-xs text-text-muted font-medium">Volume (Latest)</span>
-                    <span className="font-mono font-bold text-text-primary">{technicalMetrics.volume}</span>
+                    <span className="font-mono font-bold text-text-primary">{technicalMetrics.volume || "—"}</span>
                   </div>
                   <div className="flex items-center justify-between border-b border-border-subtle/30 pb-2">
                     <span className="text-xs text-text-muted font-medium">VWAP</span>
-                    <span className="font-mono font-bold text-text-primary">₹{technicalMetrics.vwap.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                    <span className="font-mono font-bold text-text-primary">
+                      {typeof technicalMetrics.vwap === "number" ? `₹${technicalMetrics.vwap.toLocaleString(undefined, {minimumFractionDigits: 2})}` : "—"}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -377,25 +415,29 @@ export default function InstitutionalResearchPage() {
                   Institutional Citations
                 </h3>
                 <div className="space-y-3">
-                  {citations.map((cit, idx) => (
-                    <a 
-                      key={idx} 
-                      href={`https://www.google.com/search?q=${encodeURIComponent(searchSymbol + " " + cit.title)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="group p-2.5 border border-border-subtle rounded bg-surface-base hover:border-primary hover:text-primary cursor-pointer transition-all flex items-center justify-between block hover:-translate-y-0.5 hover:shadow-md duration-300"
-                    >
-                      <div className="overflow-hidden">
-                        <p className="text-xs font-bold text-text-primary group-hover:text-primary transition-colors truncate">
-                          {cit.title}
-                        </p>
-                        <p className="text-[9px] text-text-muted font-mono mt-0.5 truncate">{cit.meta}</p>
-                      </div>
-                      <span className="material-symbols-outlined text-text-muted group-hover:text-primary !text-sm flex-shrink-0">
-                        open_in_new
-                      </span>
-                    </a>
-                  ))}
+                  {citations.length === 0 ? (
+                    <p className="text-xs text-text-muted italic">No company-specific regulatory filings cited.</p>
+                  ) : (
+                    citations.map((cit, idx) => (
+                      <a 
+                        key={idx} 
+                        href={`https://www.google.com/search?q=${encodeURIComponent(searchSymbol + " " + cit.title)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="group p-2.5 border border-border-subtle rounded bg-surface-base hover:border-primary hover:text-primary cursor-pointer transition-all flex items-center justify-between block hover:-translate-y-0.5 hover:shadow-md duration-300"
+                      >
+                        <div className="overflow-hidden">
+                          <p className="text-xs font-bold text-text-primary group-hover:text-primary transition-colors truncate">
+                            {cit.title}
+                          </p>
+                          <p className="text-[9px] text-text-muted font-mono mt-0.5 truncate">{cit.meta}</p>
+                        </div>
+                        <span className="material-symbols-outlined text-text-muted group-hover:text-primary !text-sm flex-shrink-0">
+                          open_in_new
+                        </span>
+                      </a>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -404,28 +446,42 @@ export default function InstitutionalResearchPage() {
                 <h4 className="text-[10px] font-bold text-text-primary uppercase tracking-wider mb-3">
                   Ownership Structure
                 </h4>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-3">
-                    <div className="w-2.5 h-2.5 bg-primary rounded-sm"></div>
-                    <span className="text-xs text-text-muted flex-1">Promoter Group</span>
-                    <span className="text-xs font-mono font-bold text-text-primary">{ownership.promoter.toFixed(2)}%</span>
+                {ownership.status === "unavailable" || ownership.promoter === null ? (
+                  <p className="text-xs text-text-muted italic py-2">
+                    Shareholding disclosures currently unavailable from public feeds.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3">
+                      <div className="w-2.5 h-2.5 bg-primary rounded-sm"></div>
+                      <span className="text-xs text-text-muted flex-1">Promoter Group</span>
+                      <span className="text-xs font-mono font-bold text-text-primary">
+                        {typeof ownership.promoter === "number" ? `${ownership.promoter.toFixed(2)}%` : "Not Disclosed"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="w-2.5 h-2.5 bg-secondary rounded-sm"></div>
+                      <span className="text-xs text-text-muted flex-1">FII / FPI</span>
+                      <span className="text-xs font-mono font-bold text-text-primary">
+                        {typeof ownership.fii === "number" ? `${ownership.fii.toFixed(2)}%` : "Not Disclosed"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="w-2.5 h-2.5 bg-border-subtle rounded-sm"></div>
+                      <span className="text-xs text-text-muted flex-1">DII / Mutual Funds</span>
+                      <span className="text-xs font-mono font-bold text-text-primary">
+                        {typeof ownership.dii === "number" ? `${ownership.dii.toFixed(2)}%` : "Not Disclosed"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="w-2.5 h-2.5 bg-canvas rounded-sm animate-pulse"></div>
+                      <span className="text-xs text-text-muted flex-1">Public &amp; Others</span>
+                      <span className="text-xs font-mono font-bold text-text-primary">
+                        {typeof ownership.public === "number" ? `${ownership.public.toFixed(2)}%` : "Not Disclosed"}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="w-2.5 h-2.5 bg-secondary rounded-sm"></div>
-                    <span className="text-xs text-text-muted flex-1">FII / FPI</span>
-                    <span className="text-xs font-mono font-bold text-text-primary">{ownership.fii.toFixed(2)}%</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="w-2.5 h-2.5 bg-border-subtle rounded-sm"></div>
-                    <span className="text-xs text-text-muted flex-1">DII / Mutual Funds</span>
-                    <span className="text-xs font-mono font-bold text-text-primary">{ownership.dii.toFixed(2)}%</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="w-2.5 h-2.5 bg-canvas rounded-sm animate-pulse"></div>
-                    <span className="text-xs text-text-muted flex-1">Public &amp; Others</span>
-                    <span className="text-xs font-mono font-bold text-text-primary">{ownership.public.toFixed(2)}%</span>
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           </>

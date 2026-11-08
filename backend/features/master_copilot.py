@@ -26,39 +26,7 @@ import google.generativeai as genai
 from google.api_core import exceptions
 from langchain_community.vectorstores import Chroma
 
-# --- Monkey Patching Gemini SDK for Automatic Rate Limit Retries ---
-def setup_monkey_patch(logger: logging.Logger):
-    """Monkey patches the Google Generative AI SDK's generate_content method.
-    This injects automatic retries with exponential backoff and jitter for 429 ResourceExhausted errors
-    and transient API failures, as well as a proactive rate-limiting cooldown delay.
-    """
-    original_generate_content = genai.GenerativeModel.generate_content
-
-    def patched_generate_content(self, *args, **kwargs):
-        max_retries = 5
-        base_delay = 12
-        
-        for attempt in range(max_retries):
-            try:
-                return original_generate_content(self, *args, **kwargs)
-            except exceptions.ResourceExhausted as e:
-                if attempt == max_retries - 1:
-                    logger.error("Gemini API rate limit hit (429). Out of retries. Raising exception.")
-                    raise e
-                delay = base_delay * (2 ** attempt) + random.uniform(1, 4)
-                logger.warning(f"Gemini API rate limit hit (429). Retrying in {delay:.2f} seconds... (Attempt {attempt+1}/{max_retries})")
-                time.sleep(delay)
-            except Exception as e:
-                # Handle other transient connection/API errors with a short backoff
-                if attempt == max_retries - 1:
-                    logger.error(f"Gemini API call failed: {str(e)}. Out of retries. Raising exception.")
-                    raise e
-                delay = 3 * (2 ** attempt) + random.uniform(0, 2)
-                logger.warning(f"Gemini API call failed with error: {str(e)}. Retrying in {delay:.2f} seconds... (Attempt {attempt+1}/{max_retries})")
-                time.sleep(delay)
-
-    genai.GenerativeModel.generate_content = patched_generate_content
-    logger.info("Successfully monkey-patched google.generativeai.GenerativeModel.generate_content for rate-limit resilience.")
+from core.gemini_client import call_gemini, GeminiClientError
 
 from rag.query import (
     load_vector_store,
@@ -81,7 +49,8 @@ else:
     logger.warning("GEMINI_API_KEY environment variable not found. Master Copilot AI functions will be disabled.")
 
 # --- Master Prompt Template ---
-MASTER_PROMPT_TEMPLATE = """You are the TradeGPT India Master Copilot, a supreme financial intelligence orchestrator and investment research advisor for retail investors.
+MASTER_PROMPT_TEMPLATE = """You are the TradeGPT India Master Copilot, an educational financial intelligence and research analysis engine for retail investors.
+You are NOT a SEBI-registered investment adviser. Provide objective financial analysis, educational interpretations, and risk observations only. Never claim licensed investment advisor persona or state that this is regulated financial advice.
 Your task is to generate a single, highly integrated, unified Master Financial Intelligence Report based on:
 1. The Portfolio Health Diagnosis Report
 2. Individual Stock Financial Analyses for the top holdings
@@ -276,8 +245,7 @@ def generate_master_report_data(portfolio_str: str, db: Chroma, logger: logging.
         
         logger.info("START: Gemini generation for Master Copilot report")
         start_g = time.time()
-        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-        response = model.generate_content(master_prompt, request_options={"timeout": 15})
+        report_text = call_gemini(master_prompt, log=logger)
         logger.info(f"END: Gemini generation for Master Copilot report ({time.time() - start_g:.2f} sec)")
         
         # News sources deduplication
@@ -324,7 +292,7 @@ def generate_master_report_data(portfolio_str: str, db: Chroma, logger: logging.
         # Parse health score from the report text (look for numeric score near 'health score')
         import re as _re
         health_score = 65  # default
-        score_match = _re.search(r'(?:health\s+score|score)[:\s]+([0-9]{1,3})(?:\s*/\s*100)?', response.text, _re.IGNORECASE)
+        score_match = _re.search(r'(?:health\s+score|score)[:\s]+([0-9]{1,3})(?:\s*/\s*100)?', report_text, _re.IGNORECASE)
         if score_match:
             parsed = int(score_match.group(1))
             if 0 <= parsed <= 100:
@@ -332,7 +300,7 @@ def generate_master_report_data(portfolio_str: str, db: Chroma, logger: logging.
         
         return {
             "success": True,
-            "report": response.text.strip(),
+            "report": report_text.strip(),
             "news": news_list,
             "rag_sources": rag_list,
             # Structured data for frontend panels

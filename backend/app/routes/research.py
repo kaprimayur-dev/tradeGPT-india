@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request, HTTPException, status
 from app.schemas.research import ResearchRequest, ResearchResponse
 from app.schemas.portfolio import ErrorResponse
 from app.services.research_service import ResearchService
+from core.gemini_client import GeminiClientError
 import logging
 import time
 
@@ -19,6 +20,16 @@ def research_stock(payload: ResearchRequest, request: Request):
     to return a structured research report for the target stock.
     """
     logger.info("Entering endpoint: POST /research")
+    
+    # 1. Validate user inputs first (F-22 fix)
+    if not payload.symbol or not payload.symbol.strip():
+        logger.error("Stock symbol is empty")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Stock symbol or name cannot be empty."
+        )
+
+    # 2. Check service dependencies
     import os
     if not os.getenv("GEMINI_API_KEY"):
         logger.error("AI service unavailable: GEMINI_API_KEY missing")
@@ -40,30 +51,36 @@ def research_stock(payload: ResearchRequest, request: Request):
             detail="Vector database is temporarily unavailable."
         )
         
-    if not payload.symbol.strip():
-        logger.error("Stock symbol is empty")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Stock symbol or name cannot be empty."
-        )
-        
     try:
         logger.info(f"START: Research generation for {payload.symbol}")
         start_research = time.time()
         result = ResearchService.generate_research(payload.symbol, db)
         logger.info(f"END: Research generation for {payload.symbol} ({time.time() - start_research:.2f} sec)")
         
-        if not result["success"]:
-            logger.error(f"Research generation failed: {result.get('report')}")
+        if not result.get("success"):
+            err_msg = result.get("report", "Failed to generate research report.")
+            logger.error(f"Research generation failed: {err_msg}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=result.get("report", "Failed to generate research report.")
+                detail=err_msg
             )
             
         logger.info("START: Returning JSON response")
         return result
     except HTTPException:
         raise
+    except GeminiClientError as ge:
+        logger.error(f"Gemini error in research: {ge.message}")
+        raise HTTPException(
+            status_code=ge.status_code,
+            detail=ge.message
+        )
+    except ValueError as ve:
+        logger.error(f"Validation error in research: {str(ve)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve)
+        )
     except Exception as e:
         logger.error(f"Unexpected error during research endpoint: {str(e)}", exc_info=True)
         raise HTTPException(

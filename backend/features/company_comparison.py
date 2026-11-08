@@ -23,6 +23,7 @@ else:
 
 import google.generativeai as genai
 from langchain_community.vectorstores import Chroma
+from core.gemini_client import call_gemini, GeminiClientError
 
 # Import existing RAG query and retrieval methods
 from rag.query import (
@@ -208,9 +209,8 @@ def run_company_comparison(
         )
         
         # 5. Invoke Gemini LLM for comparative reasoning
-        logger.info(f"Sending comparative prompt to Gemini model: {GEMINI_MODEL_NAME}")
-        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-        response = model.generate_content(prompt)
+        logger.info(f"Sending comparative prompt to Gemini via call_gemini")
+        report_text = call_gemini(prompt, log=logger)
         logger.info("Successfully received comparison report from Gemini.")
         
         # 6. Extract combined sources
@@ -228,7 +228,7 @@ def run_company_comparison(
         combined_sources.sort(key=lambda x: (x["filename"], x["page"]))
         
         # 7. Print comparative output report
-        print(response.text.strip())
+        print(report_text.strip())
         print("\nSources:")
         if combined_sources:
             for src in combined_sources:

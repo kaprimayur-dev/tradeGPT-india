@@ -22,6 +22,7 @@ else:
 
 import google.generativeai as genai
 from langchain_community.vectorstores import Chroma
+from core.gemini_client import call_gemini, GeminiClientError
 
 # Import existing RAG query and retrieval methods
 from rag.query import (
@@ -140,11 +141,11 @@ def analyze_macro_dependencies_data(company_name: str, db: Chroma, logger: loggi
     # Formulate a query targeting macro factors, US business, interest rates, AI, currency, and geopolitics
     retrieval_query = f"macroeconomics, inflation, US client demand, currency exposure, AI interest rate sensitivity, and geopolitical factors affecting {company_name}"
     
-    retrieved_results = retrieve_relevant_chunks(retrieval_query, db, k=10, logger=logger)
+    retrieved_results = retrieve_relevant_chunks(retrieval_query, db, k=10, logger=logger, company_name=company_name)
     
     if not retrieved_results:
-        logger.warning(f"No relevant data found for '{company_name}' in the database.")
-        return {"report": f"No relevant data found for '{company_name}' in the database.", "sources": []}
+        logger.info(f"TG-002: No verified disclosures for '{company_name}'. Returning empty context.")
+        return {"report": f"No verified corporate disclosures found for '{company_name}' in the local report store. Macro dependency RAG analysis unavailable.", "sources": []}
         
     # Format the context blocks
     context_str = ""
@@ -160,15 +161,14 @@ def analyze_macro_dependencies_data(company_name: str, db: Chroma, logger: loggi
     # Invoke Gemini LLM
     logger.info(f"START: Gemini generation for Macro Dependency ({company_name})")
     start_g = time.time()
-    model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-    response = model.generate_content(prompt, request_options={"timeout": 15})
+    report_text = call_gemini(prompt, log=logger)
     logger.info(f"END: Gemini generation for Macro Dependency ({company_name}) ({time.time() - start_g:.2f} sec)")
     
     # Extract sources
     sources = extract_sources(retrieved_results)
     
     return {
-        "report": response.text.strip(),
+        "report": report_text.strip(),
         "sources": sources
     }
 

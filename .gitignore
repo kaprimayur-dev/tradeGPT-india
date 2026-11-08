@@ -46,3 +46,5 @@ backend/scratch_test.py
 backend/test_gemini.py
 verify_chroma_1.py
 tore --staged*
+data/chroma_db/
+*.sqlite3

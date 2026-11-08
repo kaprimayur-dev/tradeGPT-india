@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
 
 class ResearchRequest(BaseModel):
     symbol: str = Field(
@@ -20,17 +20,18 @@ class RiskMatrixItem(BaseModel):
     score: float = Field(..., description="Risk score from 0 to 10.")
 
 class TechnicalMetrics(BaseModel):
-    rsi: float = Field(..., description="14-day Relative Strength Index.")
-    sma_50: float = Field(..., description="50-day Simple Moving Average.")
-    sma_200: float = Field(..., description="200-day Simple Moving Average.")
-    volume: str = Field(..., description="Latest formatted daily volume.")
-    vwap: float = Field(..., description="Calculated 20-day Volume Weighted Average Price.")
+    rsi: Optional[float] = Field(default=None, description="14-day Relative Strength Index.")
+    sma_50: Optional[float] = Field(default=None, description="50-day Simple Moving Average.")
+    sma_200: Optional[float] = Field(default=None, description="200-day Simple Moving Average.")
+    volume: Optional[str] = Field(default="N/A", description="Latest formatted daily volume.")
+    vwap: Optional[float] = Field(default=None, description="Calculated 20-day Volume Weighted Average Price.")
 
 class OwnershipStructure(BaseModel):
-    promoter: float = Field(..., description="Promoter holding percentage.")
-    fii: float = Field(..., description="Foreign Institutional Investors holding percentage.")
-    dii: float = Field(..., description="Domestic Institutional Investors holding percentage.")
-    public: float = Field(..., description="Retail/Public holding percentage.")
+    promoter: Optional[float] = Field(default=None, description="Promoter holding percentage.")
+    fii: Optional[float] = Field(default=None, description="Foreign Institutional Investors holding percentage.")
+    dii: Optional[float] = Field(default=None, description="Domestic Institutional Investors holding percentage.")
+    public: Optional[float] = Field(default=None, description="Retail/Public holding percentage.")
+    status: Optional[str] = Field(default="available", description="Ownership data status: 'available' | 'unavailable'.")
 
 class CitationBadge(BaseModel):
     title: str = Field(..., description="Citation title (e.g. Page 12).")
@@ -38,20 +39,23 @@ class CitationBadge(BaseModel):
 
 class ResearchResponse(BaseModel):
     success: bool = Field(..., description="Indicates whether the research succeeded.")
+    status: Optional[str] = Field(default="available", description="Research data status: 'available' | 'degraded' | 'unavailable'.")
+    source: Optional[str] = Field(default="Yahoo Finance & Verified Filings", description="Data provider sources.")
+    as_of: Optional[str] = Field(default=None, description="ISO timestamp of data compilation.")
     symbol: str = Field(..., description="Requested symbol name.")
     ticker: str = Field(..., description="Resolved Yahoo Finance ticker.")
-    price: float = Field(..., description="Current stock price.")
-    change: float = Field(..., description="Daily percentage change.")
-    mkt_cap: str = Field(..., description="Formatted market capitalization.")
-    pe_ratio: float = Field(..., description="Price-to-Earnings valuation ratio.")
-    beta: float = Field(..., description="Beta volatility coefficient.")
-    recommendation: str = Field(..., description="Overall analyst recommendation (BUY/HOLD/SELL).")
-    target_price: float = Field(..., description="Estimated consensus target price.")
-    upside: float = Field(..., description="Consensus target price upside percentage.")
+    price: Optional[float] = Field(default=None, description="Current stock price.")
+    change: Optional[float] = Field(default=None, description="Daily percentage change.")
+    mkt_cap: Optional[str] = Field(default="N/A", description="Formatted market capitalization.")
+    pe_ratio: Optional[float] = Field(default=None, description="Price-to-Earnings valuation ratio.")
+    beta: Optional[float] = Field(default=None, description="Beta volatility coefficient.")
+    recommendation: Optional[str] = Field(default=None, description="Overall analyst recommendation if verified (BUY/HOLD/SELL), else null.")
+    target_price: Optional[float] = Field(default=None, description="Estimated consensus target price if verified, else null.")
+    upside: Optional[float] = Field(default=None, description="Consensus target price upside percentage if verified, else null.")
     report: str = Field(..., description="Detailed markdown format analyst summary report.")
-    growth_drivers: List[GrowthDriver] = Field(..., description="Key growth catalysts.")
-    risk_matrix: List[RiskMatrixItem] = Field(..., description="SWOT risk factors.")
+    growth_drivers: List[GrowthDriver] = Field(default=[], description="Key growth catalysts.")
+    risk_matrix: List[RiskMatrixItem] = Field(default=[], description="SWOT risk factors.")
     technical_metrics: TechnicalMetrics = Field(..., description="Live technical indicators.")
-    citations: List[CitationBadge] = Field(..., description="attributed vector store citations.")
-    ownership: OwnershipStructure = Field(..., description="Corporate ownership structure.")
+    citations: List[CitationBadge] = Field(default=[], description="Attributed vector store citations.")
+    ownership: Optional[OwnershipStructure] = Field(default=None, description="Corporate ownership structure if verified, else null.")
     timestamp: str = Field(..., description="ISO compilation timestamp.")

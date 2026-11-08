@@ -25,6 +25,7 @@ import google.generativeai as genai
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
+from core.gemini_client import call_gemini, GeminiClientError
 import time
 
 # --- Configuration Constants ---
@@ -144,30 +145,80 @@ def load_vector_store(
         return None
 
 
+# Document Metadata Record of Currently Ingested Reports
+# Reconciled from actual ChromaDB collection 'trade_gpt_reports' and data/reports/annual-report-2025-2026.pdf
+INGESTED_REPORTS_METADATA = [
+    {
+        "company_name": "Tata Consultancy Services Limited",
+        "ticker": "TCS.NS",
+        "aliases": {"tcs", "tcsns", "tataconsultancyservices", "tataconsultancyserviceslimited"},
+        "document_title": "TCS Annual Report 2025-26",
+        "source_filename": "annual-report-2025-2026.pdf",
+        "fiscal_year": "FY2025-26",
+        "total_pages": 360
+    }
+]
+
+
+def is_company_covered_by_store(company_name: Optional[str]) -> bool:
+    """TG-002 Safety Check: Determines whether the local document store contains verified filings
+    for the requested company based on actual ingested document metadata.
+    
+    Verified Document in Store:
+    - Company: Tata Consultancy Services Limited (TCS.NS)
+    - Filename: annual-report-2025-2026.pdf
+    - Title: TCS Annual Report 2025-26 (Fiscal Year 2025-26)
+    
+    Fail-closed policy:
+    - All non-TCS queries (including HDFCBANK, INFY, Infosys, Reliance, Tata Motors, etc.) fail closed and return False.
+    - If company_name is None, empty, or unknown, returns False.
+    """
+    if not company_name:
+        return False
+    clean = company_name.lower().replace(".", "").replace(" ", "").replace("_", "").replace("-", "").strip()
+    
+    for report in INGESTED_REPORTS_METADATA:
+        if clean in report["aliases"]:
+            return True
+            
+    return False
+
+
 def retrieve_relevant_chunks(
     query: str, 
     db: Chroma, 
     k: int, 
-    logger: logging.Logger
+    logger: logging.Logger,
+    company_name: Optional[str] = None
 ) -> List[Tuple[Document, float]]:
     """Performs semantic similarity search to retrieve top-k matching chunks.
+    Enforces TG-002 company-scoping safety to prevent cross-company disclosure contamination.
     
     Args:
-        query (str): User's question.
+        query (str): User's question or search query.
         db (Chroma): Loaded vector store database.
         k (int): Number of chunks to retrieve.
         logger (logging.Logger): Logger instance.
+        company_name (Optional[str]): Target company/stock ticker.
         
     Returns:
         List[Tuple[Document, float]]: List of retrieved documents with their distance scores.
     """
+    # TG-002: Safety check to avoid attributing filings to other companies
+    if company_name and not is_company_covered_by_store(company_name):
+        logger.info(
+            f"TG-002 RAG Scoping: No verified disclosures found in document store for '{company_name}'. "
+            "Returning 0 chunks to prevent cross-company citation contamination."
+        )
+        return []
+
     logger.info(f"Retrieving top {k} relevant chunks for query: '{query}'")
     if db is None:
         logger.warning("Vector database is None (unavailable). Skipping semantic retrieval and returning empty results.")
         return []
         
     global _rag_cache
-    cache_key = (query, k)
+    cache_key = (query, k, company_name)
     now = time.time()
     
     with _rag_cache_lock:
@@ -189,6 +240,10 @@ def retrieve_relevant_chunks(
             logger.info(f"  [{i+1}] Doc: {filename} | Page: {page} | Score: {score:.4f}")
             
         with _rag_cache_lock:
+            # Bound cache size to 100 entries to prevent memory leak
+            if len(_rag_cache) > 100:
+                oldest_key = min(_rag_cache.keys(), key=lambda x: _rag_cache[x][1])
+                del _rag_cache[oldest_key]
             _rag_cache[cache_key] = (results, now)
             
         return results
@@ -224,10 +279,7 @@ def generate_grounded_answer(
     
     logger.info(f"Sending prompt to Gemini model: {GEMINI_MODEL_NAME}")
     try:
-        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-        response = model.generate_content(prompt, request_options={"timeout": 15})
-        logger.info("Successfully received LLM response.")
-        return response.text
+        return call_gemini(prompt, log=logger)
     except Exception as e:
         logger.error(f"Error calling Gemini API: {str(e)}", exc_info=True)
         raise e

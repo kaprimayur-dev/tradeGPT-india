@@ -1,9 +1,28 @@
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+export class ApiError extends Error {
+  status: number;
+  data?: unknown;
+
+  constructor(message: string, status: number, data?: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.data = data;
+  }
+}
+
 /**
- * Reusable fetch wrapper with automatic retry support and exponential backoff.
+ * Reusable fetch wrapper with strict truthfulness & retry policy:
+ * - Never retries 4xx client errors (400, 401, 403, 404, 422).
+ * - Never retries 503 Service Unavailable by default.
+ * - Never retries non-idempotent requests (POST, PUT, DELETE, PATCH).
+ * - Retries at most 2 times only on idempotent GET requests experiencing transient 502/504 or network failures.
  */
-async function fetchWithRetry(url: string, options: RequestInit = {}, retries = 3, delay = 1000): Promise<unknown> {
+async function fetchWithRetry(url: string, options: RequestInit = {}, retries = 2, delay = 1000): Promise<unknown> {
+  const method = (options.method || "GET").toUpperCase();
+  const isIdempotent = method === "GET" || method === "HEAD";
+
   try {
     const res = await fetch(url, {
       ...options,
@@ -15,23 +34,41 @@ async function fetchWithRetry(url: string, options: RequestInit = {}, retries = 
 
     if (!res.ok) {
       let errorMessage = `HTTP error! status: ${res.status}`;
+      let errorData: unknown;
       try {
-        const errorJson = await res.json() as { detail?: string };
+        const errorJson = (await res.json()) as { detail?: string };
         errorMessage = errorJson.detail || errorMessage;
+        errorData = errorJson;
       } catch {
         try {
           const errorText = await res.text();
           errorMessage = errorText || errorMessage;
         } catch {/* ignore secondary parse errors */}
       }
-      throw new Error(errorMessage);
+
+      const apiErr = new ApiError(errorMessage, res.status, errorData);
+
+      // Do NOT retry 4xx errors, 503 service unavailable, or non-idempotent operations
+      const isRetryableStatus = res.status === 502 || res.status === 504;
+      if (isIdempotent && isRetryableStatus && retries > 0) {
+        console.warn(`Idempotent ${method} to ${url} failed with status ${res.status}. Retrying in ${delay}ms... (${retries} retries left)`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        return fetchWithRetry(url, options, retries - 1, delay * 1.5);
+      }
+
+      throw apiErr;
     }
 
     return await res.json();
   } catch (error: unknown) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+
+    // Network / connection drop errors
     const err = error as Error;
-    if (retries > 0) {
-      console.warn(`Fetch to ${url} failed: ${err.message}. Retrying in ${delay}ms... (${retries} retries left)`);
+    if (isIdempotent && retries > 0) {
+      console.warn(`Network failure on ${method} to ${url}: ${err.message}. Retrying in ${delay}ms... (${retries} retries left)`);
       await new Promise((resolve) => setTimeout(resolve, delay));
       return fetchWithRetry(url, options, retries - 1, delay * 1.5);
     }
@@ -39,16 +76,27 @@ async function fetchWithRetry(url: string, options: RequestInit = {}, retries = 
   }
 }
 
+export type DataIntegrityStatus = "available" | "degraded" | "unavailable";
+
 export interface IndexTicker {
-  price: number;
-  change: number;
+  price?: number | null;
+  change?: number | null;
   sparkline?: number[];
+  status?: DataIntegrityStatus;
 }
 
 export interface SectorItem {
   name: string;
   weight: number;
-  change: number;
+  change?: number | null;
+  status?: DataIntegrityStatus;
+}
+
+export interface BreadthData {
+  advancing?: number | null;
+  declining?: number | null;
+  unchanged?: number | null;
+  status?: DataIntegrityStatus;
 }
 
 export interface NewsArticle {
@@ -70,8 +118,11 @@ export interface CandleItem {
 
 export interface MarketDataResponse {
   success: boolean;
+  status?: DataIntegrityStatus;
+  source?: string;
+  as_of?: string | null;
   indices: Record<string, IndexTicker>;
-  breadth: { advancing: number; declining: number; unchanged?: number };
+  breadth: BreadthData;
   sectors: SectorItem[];
   news: NewsArticle[];
   timestamp: string;
@@ -103,18 +154,19 @@ export interface RiskMatrixItem {
 }
 
 export interface TechnicalMetrics {
-  rsi: number;
-  sma_50: number;
-  sma_200: number;
-  volume: string;
-  vwap: number;
+  rsi?: number | null;
+  sma_50?: number | null;
+  sma_200?: number | null;
+  volume?: string | null;
+  vwap?: number | null;
 }
 
 export interface OwnershipStructure {
-  promoter: number;
-  fii: number;
-  dii: number;
-  public: number;
+  promoter?: number | null;
+  fii?: number | null;
+  dii?: number | null;
+  public?: number | null;
+  status?: DataIntegrityStatus;
 }
 
 export interface CitationBadge {
@@ -124,16 +176,19 @@ export interface CitationBadge {
 
 export interface ResearchResponse {
   success: boolean;
+  status?: DataIntegrityStatus;
+  source?: string;
+  as_of?: string | null;
   symbol: string;
   ticker: string;
-  price: number;
-  change: number;
-  mkt_cap: string;
-  pe_ratio: number;
-  beta: number;
-  recommendation: string;
-  target_price: number;
-  upside: number;
+  price?: number | null;
+  change?: number | null;
+  mkt_cap?: string | null;
+  pe_ratio?: number | null;
+  beta?: number | null;
+  recommendation?: string | null;
+  target_price?: number | null;
+  upside?: number | null;
   report: string;
   growth_drivers: GrowthDriver[];
   risk_matrix: RiskMatrixItem[];
