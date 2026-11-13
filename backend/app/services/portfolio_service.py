@@ -1,70 +1,84 @@
 import logging
 import datetime
-from typing import Dict, Any
-from langchain_community.vectorstores import Chroma
-from features.master_copilot import generate_master_report_data
+from typing import Dict, Any, List, Optional, Union
+from features.portfolio.engine import PortfolioEngine
+from features.portfolio.rebalancing import simulate_rebalance
+from features.portfolio.models import HoldingItem
+from features.portfolio.analytics import parse_holdings_input
 
 logger = logging.getLogger("uvicorn.error")
 
+
 class PortfolioService:
+    """Unified service layer for portfolio intelligence, risk analytics, and rebalancing."""
+
     @staticmethod
-    def generate_report(portfolio_str: str, db: Chroma) -> Dict[str, Any]:
-        """Orchestrates the portfolio doctor, stock analyzers, macro analyzers, and realtime
-        intelligence layers via the Master Copilot.
-        
-        Args:
-            portfolio_str (str): The portfolio allocation string.
-            db (Chroma): The loaded vector store database.
-            
-        Returns:
-            Dict[str, Any]: A dictionary containing success status, report text, structured
-                            data (holdings, sector_weights, health_score, hhi), and timestamp.
+    def analyze(
+        portfolio_input: Union[str, List[Dict[str, Any]], List[HoldingItem]]
+    ) -> Dict[str, Any]:
+        """Executes full quantitative analysis: valuation, concentration, historical proxy risk,
+        diagnostic findings, and fail-open AI report generation.
         """
-        logger.info("PortfolioService.generate_report invoked.")
-        timestamp = datetime.datetime.now().isoformat()
-        
-        data = generate_master_report_data(portfolio_str, db, logger)
-        
-        if not data["success"]:
-            logger.error(f"Master Copilot execution failed: {data.get('error')}")
+        logger.info("PortfolioService.analyze invoked.")
+        engine = PortfolioEngine(log=logger)
+        return engine.analyze_portfolio(portfolio_input)
+
+    @staticmethod
+    def simulate_rebalance(
+        target_weights: Dict[str, float],
+        holdings: Optional[List[Dict[str, Any]]] = None,
+        portfolio_str: Optional[str] = None,
+        additional_cash: float = 0.0,
+    ) -> Dict[str, Any]:
+        """Simulates integer-share target weight rebalancing with Indian statutory and brokerage fees."""
+        logger.info("PortfolioService.simulate_rebalance invoked.")
+        engine = PortfolioEngine(log=logger)
+
+        input_data: Union[str, List[Dict[str, Any]]]
+        if holdings is not None and len(holdings) > 0:
+            input_data = holdings
+        elif portfolio_str and portfolio_str.strip():
+            input_data = portfolio_str
+        else:
+            raise ValueError("Rebalancing simulation requires either existing 'holdings' or a 'portfolio' string.")
+
+        # 1. Fetch current valuation and prices
+        analysis_res = engine.analyze_portfolio(input_data)
+        holdings_items = [
+            HoldingItem(**h_dict) for h_dict in analysis_res.get("holdings_detail", [])
+        ]
+
+        # 2. Run deterministic rebalance
+        rebal_res = simulate_rebalance(
+            holdings=holdings_items,
+            target_weights=target_weights,
+            additional_cash=additional_cash,
+        )
+
+        return {
+            "success": True,
+            "actions": [a.model_dump() for a in rebal_res.actions],
+            "total_trade_value": rebal_res.total_trade_value,
+            "total_estimated_friction": rebal_res.total_estimated_friction,
+            "residual_cash": rebal_res.residual_cash,
+            "projected_total_value": rebal_res.projected_total_value,
+            "disclaimer": rebal_res.disclaimer,
+        }
+
+    @staticmethod
+    def generate_report(portfolio_str: str, db: Any = None) -> Dict[str, Any]:
+        """Backward-compatible entry point for portfolio report generation."""
+        logger.info("PortfolioService.generate_report invoked (delegating to PortfolioEngine).")
+        try:
+            return PortfolioService.analyze(portfolio_str)
+        except Exception as e:
+            logger.error(f"Portfolio analysis failed in generate_report: {str(e)}", exc_info=True)
             return {
                 "success": False,
-                "report": f"An error occurred while compiling the report: {data.get('error')}",
-                "timestamp": timestamp,
+                "report": f"An error occurred while compiling the report: {str(e)}",
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "health_score": None,
                 "holdings": None,
                 "sector_weights": None,
                 "hhi": None,
             }
-            
-        # Format and append combined source attribution to the report
-        report_text = data["report"]
-        
-        sources_str = "\n\nSource Attribution:\n"
-        sources_str += "1. Real-Time Market Data & Sectors: Yahoo Finance API\n"
-        
-        news_list = data.get("news", [])
-        if news_list:
-            sources_str += "2. News Sources:\n"
-            for art in news_list[:6]:
-                sources_str += f"   * {art['title']} (Published by {art['publisher']} on {art['date']})\n"
-                
-        rag_list = data.get("rag_sources", [])
-        if rag_list:
-            sources_str += "3. Historical Disclosures (RAG Annual Report):\n"
-            for src in rag_list:
-                sources_str += f"   * Page {src['page']} (from {src['filename']})\n"
-                
-        full_report = report_text + sources_str
-        
-        logger.info("PortfolioService.generate_report execution completed successfully.")
-        return {
-            "success": True,
-            "report": full_report,
-            "timestamp": timestamp,
-            # Structured data for frontend dynamic panels
-            "health_score": data.get("health_score"),
-            "holdings": data.get("holdings"),
-            "sector_weights": data.get("sector_weights"),
-            "hhi": data.get("hhi"),
-        }

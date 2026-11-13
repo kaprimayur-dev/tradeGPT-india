@@ -130,6 +130,90 @@ export interface MarketDataResponse {
   watchlist?: Record<string, IndexTicker>;
 }
 
+export interface HoldingDetail {
+  symbol: string;
+  exchange: string;
+  quantity: number;
+  avg_buy_price: number;
+  current_price?: number | null;
+  market_value?: number | null;
+  invested_value?: number | null;
+  unrealized_pnl?: number | null;
+  unrealized_pnl_pct?: number | null;
+  weight_pct?: number | null;
+  sector: string;
+  price_source?: string | null;
+}
+
+export interface ValuationSummary {
+  total_invested: number;
+  current_market_value: number;
+  unrealized_pnl: number;
+  unrealized_pnl_pct: number;
+  currency: string;
+  holdings_count: number;
+}
+
+export interface ConcentrationMetrics {
+  hhi: number;
+  hhi_category: string;
+  effective_n: number;
+  top_holding_symbol: string;
+  top_holding_weight: number;
+  top_5_weight: number;
+  health_score: number;
+  score_breakdown?: Record<string, unknown>;
+  interpretation: string;
+}
+
+export interface RiskMetrics {
+  annualized_volatility?: number | null;
+  beta_nifty50?: number | null;
+  max_drawdown?: number | null;
+  correlation_matrix?: Record<string, Record<string, number>>;
+  benchmark_symbol: string;
+  observations_count: number;
+  coverage_ratio: number;
+  start_date?: string | null;
+  end_date?: string | null;
+  is_historical_proxy: boolean;
+  proxy_disclosure: string;
+  status: string;
+}
+
+export interface FindingItem {
+  category: string;
+  severity: "CRITICAL" | "WARNING" | "INFO";
+  title: string;
+  detail: string;
+  metric_value?: number | null;
+}
+
+export interface RebalanceAction {
+  symbol: string;
+  current_qty: number;
+  target_qty: number;
+  delta_qty: number;
+  action: "BUY" | "SELL" | "HOLD";
+  current_price: number;
+  trade_value: number;
+  estimated_fees: number;
+  current_weight_pct: number;
+  target_weight_pct: number;
+  projected_weight_pct: number;
+}
+
+export interface RebalanceResponse {
+  success: boolean;
+  actions?: RebalanceAction[];
+  total_trade_value?: number;
+  total_estimated_friction?: number;
+  residual_cash?: number;
+  projected_total_value?: number;
+  disclaimer?: string;
+  error?: string;
+}
+
 export interface PortfolioResponse {
   success: boolean;
   report: string;
@@ -138,6 +222,12 @@ export interface PortfolioResponse {
   holdings?: Record<string, number>;
   sector_weights?: Record<string, number>;
   hhi?: number;
+  holdings_detail?: HoldingDetail[];
+  valuation?: ValuationSummary;
+  concentration?: ConcentrationMetrics;
+  risk_metrics?: RiskMetrics;
+  findings?: FindingItem[];
+  ai_status?: string;
 }
 
 export interface GrowthDriver {
@@ -282,6 +372,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ portfolio }),
     }) as Promise<PortfolioResponse>;
+  },
+
+  /**
+   * POST /analyze/rebalance
+   */
+  async rebalancePortfolio(
+    targetWeights: Record<string, number>,
+    portfolio?: string,
+    additionalCash: number = 0
+  ): Promise<RebalanceResponse> {
+    return fetchWithRetry(`${API_BASE_URL}/analyze/rebalance`, {
+      method: "POST",
+      body: JSON.stringify({
+        target_weights: targetWeights,
+        portfolio,
+        additional_cash: additionalCash,
+      }),
+    }) as Promise<RebalanceResponse>;
   },
 
   /**
