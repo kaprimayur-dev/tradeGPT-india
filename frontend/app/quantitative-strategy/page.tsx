@@ -101,7 +101,7 @@ export default function QuantitativeStrategyPage() {
   }
 
   const score = backtestResult
-    ? Math.round(Math.min(100, Math.max(10, backtestResult.win_rate + (backtestResult.sharpe_ratio * 15))))
+    ? Math.round(Math.min(100, Math.max(10, (backtestResult.win_rate ?? 0) + (backtestResult.sharpe_ratio * 15))))
     : 88;
 
   const handleExportCSV = () => {
@@ -231,11 +231,19 @@ export default function QuantitativeStrategyPage() {
           </div>
           <div>
             <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">Brokerage & GST</span>
-            <span className="font-mono font-bold text-[#191b23]">₹20 / 0.03% + 18% GST</span>
+            <span className="font-mono font-bold text-[#191b23]">₹20 / 0.03% (Assumed profile) + 18% GST</span>
+          </div>
+          <div>
+            <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">Exchange & IPFT</span>
+            <span className="font-mono font-bold text-[#191b23]">NSE: ₹307/cr (₹297 + ₹10 IPFT)</span>
           </div>
           <div>
             <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">STT & Stamp Duty</span>
-            <span className="font-mono font-bold text-[#191b23]">0.1% STT | 0.015% Stamp</span>
+            <span className="font-mono font-bold text-[#191b23]">0.1% STT (both) | 0.015% Stamp (buy)</span>
+          </div>
+          <div>
+            <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">Risk-Free Benchmark</span>
+            <span className="font-mono font-bold text-[#191b23]">6.50% (RBI Repo benchmark)</span>
           </div>
           <div>
             <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">Slippage & Timing</span>
@@ -389,13 +397,13 @@ export default function QuantitativeStrategyPage() {
                       <div>
                         <p className="text-[10px] text-[#737686]">Win Rate</p>
                         <p className="text-base font-bold text-[#191b23]">
-                          {backtestResult ? `${backtestResult.win_rate.toFixed(1)}%` : "0.0%"}
+                          {backtestResult ? (backtestResult.win_rate !== null ? `${backtestResult.win_rate.toFixed(1)}%` : "N/A (0 trades)") : "0.0%"}
                         </p>
                       </div>
                       <div className="w-16 h-1 bg-[#e7e7f3] rounded-full overflow-hidden mb-1.5">
                         <div 
                           className="h-full bg-[#004ac6]" 
-                          style={{ width: `${backtestResult ? backtestResult.win_rate : 0}%` }}
+                          style={{ width: `${backtestResult?.win_rate ?? 0}%` }}
                         ></div>
                       </div>
                     </div>
@@ -403,7 +411,9 @@ export default function QuantitativeStrategyPage() {
                       <div>
                         <p className="text-[10px] text-[#737686]">Profit Factor / Vol</p>
                         <p className="text-xs font-bold text-[#191b23]">
-                          {backtestResult?.profit_factor !== undefined ? backtestResult.profit_factor.toFixed(2) : "-"}
+                          {backtestResult?.profit_factor !== null && backtestResult?.profit_factor !== undefined
+                            ? backtestResult.profit_factor.toFixed(2)
+                            : (backtestResult?.profit_factor_status === "infinite" ? "∞ (All Win)" : "-")}
                           {" / "}
                           {backtestResult?.annualized_volatility !== undefined ? `${backtestResult.annualized_volatility.toFixed(1)}%` : "-"}
                         </p>
@@ -450,11 +460,16 @@ export default function QuantitativeStrategyPage() {
                 <div className="flex items-center justify-between border-b border-[#e7e7f3] pb-2 mb-3">
                   <div className="flex items-center gap-2">
                     <span className="material-symbols-outlined text-[#004ac6] !text-base">receipt_long</span>
-                    <h3 className="font-display font-bold text-xs text-[#191b23] uppercase tracking-wider">Indian Statutory & Slippage Friction</h3>
+                    <h3 className="font-display font-bold text-xs text-[#191b23] uppercase tracking-wider">Indian Statutory & Slippage Friction (NSE Cash Model)</h3>
                   </div>
-                  <span className="text-[11px] font-mono font-bold text-[#ba1a1a]">
-                    Total Friction: ₹{backtestResult.cost_breakdown.total_costs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] font-mono text-[#737686]">
+                      Fees: ₹{backtestResult.cost_breakdown.transaction_fees_total?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) ?? backtestResult.cost_breakdown.total_costs.toFixed(2)}
+                    </span>
+                    <span className="text-[11px] font-mono font-bold text-[#ba1a1a]">
+                      All-in Friction: ₹{(backtestResult.all_in_friction_total ?? (backtestResult.cost_breakdown.total_costs + backtestResult.cost_breakdown.slippage)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 text-xs">
                   <div className="bg-[#faf8ff] p-2 rounded border border-[#e7e7f3]">

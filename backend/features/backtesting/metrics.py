@@ -4,15 +4,14 @@ Calculates mathematically rigorous, deterministic performance metrics for backte
 - Total Return & CAGR (compounded annual growth rate)
 - Maximum Drawdown (peak-to-trough decline)
 - Annualized Volatility (standard deviation of daily returns scaled by sqrt(252))
-- Sharpe Ratio (annualized excess return over risk-free rate)
-- Win Rate, Profit Factor, Average Win / Average Loss
-- Market Exposure & Transaction Friction
+- Sharpe Ratio (annualized excess return over configurable risk-free rate)
+- Win Rate, Profit Factor (properly represented when no losses occur), Average Win / Average Loss
+- Market Exposure & Transaction Friction Breakdown
 """
 
 from typing import Dict, Any, List, Optional
 import numpy as np
 import pandas as pd
-import datetime
 from .ledger import TradeRecord
 
 
@@ -22,7 +21,7 @@ def calculate_performance_metrics(
     initial_capital: float,
     total_bars: int = 0,
     bars_in_market: int = 0,
-    risk_free_rate: float = 0.06
+    risk_free_rate: float = 0.065
 ) -> Dict[str, Any]:
     """Computes comprehensive performance metrics from an equity curve and trade ledger.
 
@@ -32,7 +31,7 @@ def calculate_performance_metrics(
         initial_capital: Initial cash capital at start of simulation.
         total_bars: Total number of trading bars in the backtest period.
         bars_in_market: Total number of trading bars where an active position was held.
-        risk_free_rate: Annualized risk-free rate (default 6.0% for Indian 10Y G-Sec / RBI repo).
+        risk_free_rate: Annualized risk-free rate assumption (default 6.50% based on RBI Repo / 91-day T-bill).
 
     Returns:
         Dict[str, Any] containing computed performance and risk statistics.
@@ -95,23 +94,35 @@ def calculate_performance_metrics(
     num_trades = len(closed_trades)
     winning_trades = [t for t in closed_trades if t.net_pnl > 0]
     losing_trades = [t for t in closed_trades if t.net_pnl < 0]
-    win_rate = (len(winning_trades) / num_trades * 100.0) if num_trades > 0 else 0.0
 
-    total_gains = sum(t.net_pnl for t in winning_trades)
-    total_losses = abs(sum(t.net_pnl for t in losing_trades))
-
-    if total_losses > 0:
-        profit_factor = round(total_gains / total_losses, 2)
-    elif total_gains > 0:
-        profit_factor = 999.0  # Infinite / all-winning trades capped for JSON
+    # Distinguish no-trades from 0% win rate
+    if num_trades == 0:
+        win_rate = None
+        profit_factor = None
+        profit_factor_status = "no_trades"
+        avg_win = None
+        avg_loss = None
     else:
-        profit_factor = 0.0
+        win_rate = round(len(winning_trades) / num_trades * 100.0, 2)
+        total_gains = sum(t.net_pnl for t in winning_trades)
+        total_losses = abs(sum(t.net_pnl for t in losing_trades))
 
-    avg_win = (total_gains / len(winning_trades)) if winning_trades else 0.0
-    avg_loss = (total_losses / len(losing_trades)) if losing_trades else 0.0
+        if total_losses > 0:
+            profit_factor = round(total_gains / total_losses, 2)
+            profit_factor_status = "defined"
+        elif total_gains > 0:
+            profit_factor = None  # Properly represent infinite / undefined rather than arbitrary numeric 999.0
+            profit_factor_status = "infinite"
+        else:
+            profit_factor = 0.0
+            profit_factor_status = "zero"
 
-    total_costs = sum(t.total_costs for t in closed_trades)
+        avg_win = round(total_gains / len(winning_trades), 2) if winning_trades else None
+        avg_loss = round(total_losses / len(losing_trades), 2) if losing_trades else None
+
+    total_transaction_fees = sum(t.total_costs for t in closed_trades)
     total_slippage = sum(t.slippage_paid for t in closed_trades)
+    all_in_friction = sum(getattr(t, "all_in_friction", t.total_costs + t.slippage_paid) for t in closed_trades)
 
     market_exposure_pct = (
         (bars_in_market / total_bars * 100.0) if total_bars > 0 else 0.0
@@ -125,13 +136,20 @@ def calculate_performance_metrics(
         "max_drawdown": round(max_drawdown, 2),
         "annualized_volatility": round(annualized_volatility, 2),
         "sharpe_ratio": round(sharpe_ratio, 2),
-        "win_rate": round(win_rate, 2),
+        "assumed_risk_free_rate": round(risk_free_rate * 100.0, 2),
+        "risk_free_rate_note": (
+            f"Assumed benchmark of {risk_free_rate * 100.0:.2f}% based on prevailing RBI Repo / "
+            "91-Day Treasury Bill rate as of early 2026. Note: Not interchangeable with long-term 10-year G-Sec yields."
+        ),
+        "win_rate": win_rate,
         "profit_factor": profit_factor,
-        "avg_win": round(avg_win, 2),
-        "avg_loss": round(avg_loss, 2),
+        "profit_factor_status": profit_factor_status,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
         "num_trades": num_trades,
         "market_exposure_pct": round(market_exposure_pct, 2),
         "years": round(years, 2),
-        "total_transaction_costs": round(total_costs, 2),
+        "total_transaction_costs": round(total_transaction_fees, 2),
         "total_slippage_paid": round(total_slippage, 2),
+        "all_in_friction_total": round(all_in_friction, 2),
     }

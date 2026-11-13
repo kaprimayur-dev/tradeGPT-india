@@ -14,6 +14,7 @@ from .strategies import (
     BollingerBandsStrategy,
     BuyAndHoldStrategy,
     get_strategy,
+    calculate_wilder_rsi,
 )
 from .metrics import calculate_performance_metrics
 from .engine import BacktestEngine
@@ -30,6 +31,8 @@ __all__ = [
     "BollingerBandsStrategy",
     "BuyAndHoldStrategy",
     "get_strategy",
+    "calculate_wilder_rsi",
     "calculate_performance_metrics",
     "BacktestEngine",
 ]
+

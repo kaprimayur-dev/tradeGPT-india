@@ -69,6 +69,53 @@ class SMACrossoverStrategy(Strategy):
         return signals
 
 
+def calculate_wilder_rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    """Calculates exact Wilder's Relative Strength Index (RSI).
+    
+    Implements J. Welles Wilder Jr.'s 1978 specification:
+    1. Initial average gain/loss seeded by the arithmetic mean of the first `period` deltas.
+    2. Subsequent periods use Wilder's recursive smoothing (MMA/RMA):
+       AvgGain[t] = (AvgGain[t-1] * (period - 1) + Gain[t]) / period
+       AvgLoss[t] = (AvgLoss[t-1] * (period - 1) + Loss[t]) / period
+    3. Strictly outputs NaN for all bars prior to index `period`.
+    """
+    if len(series) < period + 1:
+        return pd.Series(np.nan, index=series.index, dtype=float)
+
+    values = series.to_numpy(dtype=float)
+    deltas = np.diff(values)
+    gains = np.where(deltas > 0, deltas, 0.0)
+    losses = np.where(deltas < 0, -deltas, 0.0)
+
+    rsi = np.full(len(values), np.nan, dtype=float)
+
+    # Initial seed at index `period` (using first `period` deltas from index 0 to period-1)
+    avg_gain = float(np.mean(gains[:period]))
+    avg_loss = float(np.mean(losses[:period]))
+
+    if avg_loss == 0.0:
+        rsi[period] = 100.0 if avg_gain > 0 else 50.0
+    else:
+        rs = avg_gain / avg_loss
+        rsi[period] = 100.0 - (100.0 / (1.0 + rs))
+
+    # Wilder's recursive smoothing for subsequent bars
+    for i in range(period, len(deltas)):
+        gain_val = gains[i]
+        loss_val = losses[i]
+        avg_gain = (avg_gain * (period - 1) + gain_val) / period
+        avg_loss = (avg_loss * (period - 1) + loss_val) / period
+        idx = i + 1
+
+        if avg_loss == 0.0:
+            rsi[idx] = 100.0 if avg_gain > 0 else 50.0
+        else:
+            rs = avg_gain / avg_loss
+            rsi[idx] = 100.0 - (100.0 / (1.0 + rs))
+
+    return pd.Series(rsi, index=series.index, name="RSI")
+
+
 class RSIStrategy(Strategy):
     """Wilder's RSI Mean Reversion Strategy.
     
@@ -87,16 +134,7 @@ class RSIStrategy(Strategy):
         self.overbought = float(overbought)
 
     def calculate_rsi(self, close: pd.Series) -> pd.Series:
-        delta = close.diff()
-        gain = delta.clip(lower=0)
-        loss = -1 * delta.clip(upper=0)
-
-        avg_gain = gain.ewm(alpha=1.0 / self.period, min_periods=self.period, adjust=False).mean()
-        avg_loss = loss.ewm(alpha=1.0 / self.period, min_periods=self.period, adjust=False).mean()
-
-        rs = avg_gain / avg_loss.replace(0, 1e-9)
-        rsi = 100.0 - (100.0 / (1.0 + rs))
-        return rsi
+        return calculate_wilder_rsi(close, period=self.period)
 
     def generate_signals(self, df: pd.DataFrame) -> pd.Series:
         close = df["Close"]

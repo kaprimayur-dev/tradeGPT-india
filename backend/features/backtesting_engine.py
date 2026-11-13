@@ -32,7 +32,7 @@ import random
 from rag.query import GEMINI_MODEL_NAME
 
 from core.gemini_client import call_gemini, GeminiClientError
-from features.backtesting import BacktestEngine, IndianTradingCostModel, CostBreakdown, get_strategy
+from features.backtesting import BacktestEngine, IndianTradingCostModel, CostBreakdown, get_strategy, calculate_wilder_rsi
 
 # Configure Google Generative AI
 API_KEY = os.getenv("GEMINI_API_KEY")
@@ -74,9 +74,9 @@ SIMULATION METRICS:
 * Sharpe Ratio (Annualized, risk-free rate = {rf_rate_pct}%): {sharpe_ratio:.2f}
 * Maximum Drawdown: {max_drawdown:.2f}%
 * Annualized Volatility: {annualized_volatility:.2f}%
-* Profit Factor: {profit_factor:.2f}
+* Profit Factor: {profit_factor}
 * Number of Trades: {num_trades}
-* Win Rate: {win_rate:.2f}%
+* Win Rate: {win_rate}
 * Market Exposure: {market_exposure_pct:.2f}%
 * Total Transaction Costs: {total_costs:,.2f} INR
 * Total Slippage Incurred: {total_slippage:,.2f} INR
@@ -100,7 +100,7 @@ STRATEGY BACKTEST REPORT: {strategy_name} ON {ticker}
 [Compare the strategy's total return and risk against the Buy & Hold benchmark. Clearly state whether the strategy outperformed or underperformed the benchmark and explain why based on price movements during the backtest timeframe.]
 
 ## 4. Win Rate & Profit Factor
-[Report and analyze the win rate ({win_rate:.2f}%), profit factor ({profit_factor:.2f}), and the number of winning vs losing trades. Discuss the implications of the trade distribution.]
+[Report and analyze the win rate ({win_rate}), profit factor ({profit_factor}), and the number of winning vs losing trades. Discuss the implications of the trade distribution.]
 
 ## 5. Maximum Drawdown & Volatility
 [Explain the Maximum Drawdown ({max_drawdown:.2f}%) and Annualized Volatility ({annualized_volatility:.2f}%) observed during the simulation. Highlight the peak-to-trough drop and discuss capital preservation.]
@@ -205,7 +205,7 @@ def parse_backtest_query(query: str) -> Tuple[str, str] or None:
 
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    """Calculates Wilder's Relative Strength Index (RSI) using pandas.
+    """Calculates Wilder's Relative Strength Index (RSI) using exact 1978 Wilder smoothing.
     
     Args:
         series (pd.Series): Price series.
@@ -214,17 +214,7 @@ def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     Returns:
         pd.Series: Computed RSI values.
     """
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -1 * delta.clip(upper=0)
-    
-    # Wilder's exponential smoothing
-    avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
-    
-    rs = avg_gain / avg_loss.replace(0, 1e-9)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+    return calculate_wilder_rsi(series, period=period)
 
 
 def calculate_sma(series: pd.Series, period: int) -> pd.Series:
@@ -505,21 +495,34 @@ def calculate_metrics(
 
 
 def run_backtest_simulation(
-    strategy_name: str, 
-    company_name: str, 
+    strategy_name: Optional[str] = None, 
+    company_name: Optional[str] = None, 
     period: str = "5y", 
     initial_capital: float = 100000.0,
     slippage_pct: float = 0.0005,
-    logger: logging.Logger = None
+    risk_free_rate: float = 0.065,
+    strategy_params: Optional[Dict[str, Any]] = None,
+    df: Optional[pd.DataFrame] = None,
+    logger: logging.Logger = None,
+    strategy: Optional[str] = None,
+    symbol: Optional[str] = None
 ) -> dict:
-    """Fetches yfinance data, simulates selected strategy using BacktestEngine,
-    computes deterministic metrics with Indian statutory costs, formats trade ledgers,
-    and returns comprehensive response dictionary.
+    """Simulates selected strategy using BacktestEngine, computes deterministic metrics
+    with Indian statutory costs, formats trade ledgers, and returns comprehensive response dictionary.
+    
+    If `df` is provided directly, skips network download (ideal for deterministic tests).
+    Accepts `strategy` / `strategy_name` and `symbol` / `company_name` interchangeably.
     """
+    strategy_name = strategy_name or strategy or "SMA Crossover"
+    company_name = company_name or symbol or "TCS"
+
     if logger is None:
         logger = logging.getLogger("BacktestingEngine")
         
-    logger.info(f"Programmatic simulation: Strategy='{strategy_name}' on Stock='{company_name}', Period='{period}'")
+    logger.info(
+        f"Programmatic simulation: Strategy='{strategy_name}' on Stock='{company_name}', "
+        f"Period='{period}', RFR={risk_free_rate}, Params={strategy_params}"
+    )
     
     company_key = company_name.lower().strip()
     ticker_symbol = TICKER_MAPPING.get(company_key, f"{company_name.upper()}.NS")
@@ -528,42 +531,44 @@ def run_backtest_simulation(
         
     logger.info(f"Resolved company name '{company_name}' to ticker: '{ticker_symbol}'")
     
-    try:
-        import requests
-        class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
-            def __init__(self, *args, **kwargs):
-                self.timeout = kwargs.pop("timeout", 15)
-                super().__init__(*args, **kwargs)
-            def send(self, request, **kwargs):
-                kwargs["timeout"] = kwargs.get("timeout") or self.timeout
-                return super().send(request, **kwargs)
-                
-        session = requests.Session()
-        adapter = TimeoutHTTPAdapter(timeout=15)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-        
-        logger.info(f"START: Yahoo download for {ticker_symbol} (period={period})")
-        start_y = time.time()
-        ticker = yf.Ticker(ticker_symbol, session=session)
-        df = ticker.history(period=period, timeout=15)
-        logger.info(f"END: Yahoo download for {ticker_symbol} (period={period}) ({time.time() - start_y:.2f} sec)")
-        
-        if df.empty or len(df) < 15:
-            raise ValueError(f"Insufficient historical data retrieved for ticker: {ticker_symbol}")
-    except Exception as e:
-        logger.error(f"Failed to download data for ticker '{ticker_symbol}': {str(e)}", exc_info=True)
-        raise ValueError(f"Failed to fetch historical data for '{company_name}': {str(e)}")
+    if df is None:
+        try:
+            import requests
+            class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
+                def __init__(self, *args, **kwargs):
+                    self.timeout = kwargs.pop("timeout", 15)
+                    super().__init__(*args, **kwargs)
+                def send(self, request, **kwargs):
+                    kwargs["timeout"] = kwargs.get("timeout") or self.timeout
+                    return super().send(request, **kwargs)
+                    
+            session = requests.Session()
+            adapter = TimeoutHTTPAdapter(timeout=15)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+            
+            logger.info(f"START: Yahoo download for {ticker_symbol} (period={period})")
+            start_y = time.time()
+            ticker = yf.Ticker(ticker_symbol, session=session)
+            df = ticker.history(period=period, timeout=15)
+            logger.info(f"END: Yahoo download for {ticker_symbol} (period={period}) ({time.time() - start_y:.2f} sec)")
+            
+            if df.empty or len(df) < 15:
+                raise ValueError(f"Insufficient historical data retrieved for ticker: {ticker_symbol}")
+        except Exception as e:
+            logger.error(f"Failed to download data for ticker '{ticker_symbol}': {str(e)}", exc_info=True)
+            raise ValueError(f"Failed to fetch historical data for '{company_name}': {str(e)}")
         
     # Execute strategy simulation via hardened BacktestEngine
     cost_model = IndianTradingCostModel(slippage_pct=slippage_pct)
-    engine = BacktestEngine(cost_model=cost_model, slippage_pct=slippage_pct)
+    engine = BacktestEngine(cost_model=cost_model, slippage_pct=slippage_pct, risk_free_rate=risk_free_rate)
 
     strat_result = engine.run(
         df=df,
         strategy=strategy_name,
         symbol=ticker_symbol,
-        initial_capital=initial_capital
+        initial_capital=initial_capital,
+        strategy_kwargs=strategy_params
     )
     strategy_name_display = strat_result["strategy_name"]
     metrics = strat_result["metrics"]
@@ -585,12 +590,21 @@ def run_backtest_simulation(
     trades_summary = ""
     if trades:
         for idx, t in enumerate(trades[:15]):
-            trades_summary += f"  [{idx+1}] Long | Buy: {t.entry_date} @ {t.entry_fill_price:.2f} | Sell: {t.exit_date} @ {t.exit_fill_price:.2f} | Net PnL: ₹{t.net_pnl:,.2f} ({t.net_return_pct:+.2f}%) | Friction: ₹{t.total_costs:,.2f}\n"
+            trades_summary += (
+                f"  [{idx+1}] Long | Buy: {t.entry_date} @ {t.entry_fill_price:.2f} | "
+                f"Sell: {t.exit_date} @ {t.exit_fill_price:.2f} | Net PnL: ₹{t.net_pnl:,.2f} "
+                f"({t.net_return_pct:+.2f}%) | Friction: ₹{t.total_costs:,.2f}\n"
+            )
         if len(trades) > 15:
             trades_summary += f"  ... and {len(trades) - 15} more trades executed.\n"
     else:
         trades_summary = "  No trades executed during this timeframe."
         
+    win_rate_str = f"{metrics['win_rate']:.2f}%" if metrics["win_rate"] is not None else "N/A (No Trades)"
+    profit_factor_str = f"{metrics['profit_factor']:.2f}" if metrics["profit_factor"] is not None else (
+        "Infinite (No Losses)" if metrics.get("profit_factor_status") == "infinite" else "N/A"
+    )
+
     prompt = BACKTEST_PROMPT_TEMPLATE.format(
         ticker=ticker_symbol,
         strategy_name=strategy_name_display,
@@ -603,13 +617,13 @@ def run_backtest_simulation(
         cagr=metrics["cagr"],
         benchmark_return=bh_metrics["total_return"],
         outperformance=outperformance,
-        rf_rate_pct=6.0,
+        rf_rate_pct=round(risk_free_rate * 100.0, 2),
         sharpe_ratio=metrics["sharpe_ratio"],
         max_drawdown=metrics["max_drawdown"],
         annualized_volatility=metrics["annualized_volatility"],
-        profit_factor=metrics["profit_factor"],
+        profit_factor=profit_factor_str,
         num_trades=metrics["num_trades"],
-        win_rate=metrics["win_rate"],
+        win_rate=win_rate_str,
         market_exposure_pct=metrics["market_exposure_pct"],
         total_costs=metrics["total_transaction_costs"],
         total_slippage=metrics["total_slippage_paid"],
@@ -624,7 +638,11 @@ def run_backtest_simulation(
         logger.info(f"END: Gemini generation for backtest report ({ticker_symbol}) ({time.time() - start_g:.2f} sec)")
     except Exception as e:
         logger.error(f"Failed to generate Gemini backtesting report: {str(e)}", exc_info=True)
-        report_text = f"Historical backtest completed for {strategy_name_display} on {ticker_symbol}. Initial: ₹{initial_capital:,.2f}, Final: ₹{metrics['final_value']:,.2f}, CAGR: {metrics['cagr']}%, Sharpe: {metrics['sharpe_ratio']}."
+        report_text = (
+            f"Historical backtest completed for {strategy_name_display} on {ticker_symbol}. "
+            f"Initial: ₹{initial_capital:,.2f}, Final: ₹{metrics['final_value']:,.2f}, "
+            f"CAGR: {metrics['cagr']}%, Sharpe: {metrics['sharpe_ratio']}."
+        )
         
     formatted_trades = []
     for t in trades:
@@ -636,7 +654,16 @@ def run_backtest_simulation(
             "price": round(t.entry_fill_price, 2),
             "value": f"₹{(t.qty * t.entry_fill_price):,.2f}",
             "pnl": "-",
-            "positive": True
+            "positive": True,
+            "brokerage": round(getattr(t, "brokerage_paid", 0.0), 2),
+            "stt": round(getattr(t, "stt_paid", 0.0), 2),
+            "exchange_charges": round(getattr(t, "exchange_charges_paid", 0.0), 2),
+            "gst": round(getattr(t, "gst_paid", 0.0), 2),
+            "stamp_duty": round(getattr(t, "stamp_duty_paid", 0.0), 2),
+            "slippage_paid": round(t.slippage_paid, 2),
+            "all_in_friction": round(getattr(t, "all_in_friction", t.total_costs + t.slippage_paid), 2),
+            "holding_days": t.holding_days,
+            "exit_reason": t.exit_reason
         })
         formatted_trades.append({
             "datetime": t.exit_date,
@@ -646,7 +673,16 @@ def run_backtest_simulation(
             "price": round(t.exit_fill_price, 2),
             "value": f"₹{(t.qty * t.exit_fill_price):,.2f}",
             "pnl": f"{t.net_return_pct:+.2f}%",
-            "positive": t.net_return_pct > 0
+            "positive": t.net_return_pct > 0,
+            "brokerage": round(getattr(t, "brokerage_paid", 0.0), 2),
+            "stt": round(getattr(t, "stt_paid", 0.0), 2),
+            "exchange_charges": round(getattr(t, "exchange_charges_paid", 0.0), 2),
+            "gst": round(getattr(t, "gst_paid", 0.0), 2),
+            "stamp_duty": round(getattr(t, "stamp_duty_paid", 0.0), 2),
+            "slippage_paid": round(t.slippage_paid, 2),
+            "all_in_friction": round(getattr(t, "all_in_friction", t.total_costs + t.slippage_paid), 2),
+            "holding_days": t.holding_days,
+            "exit_reason": t.exit_reason
         })
         
     formatted_trades.sort(key=lambda x: x["datetime"])
@@ -670,17 +706,22 @@ def run_backtest_simulation(
         "cagr": round(metrics["cagr"], 2),
         "sharpe_ratio": round(metrics["sharpe_ratio"], 2),
         "max_drawdown": round(metrics["max_drawdown"], 2),
-        "win_rate": round(metrics["win_rate"], 2),
+        "win_rate": round(metrics["win_rate"], 2) if metrics["win_rate"] is not None else None,
         "final_value": round(metrics["final_value"], 2),
         "total_return": round(metrics["total_return"], 2),
         "num_trades": metrics["num_trades"],
         "outperformance": round(outperformance, 2),
-        "profit_factor": round(metrics["profit_factor"], 2),
+        "profit_factor": round(metrics["profit_factor"], 2) if metrics["profit_factor"] is not None else None,
+        "profit_factor_status": metrics.get("profit_factor_status"),
         "annualized_volatility": round(metrics["annualized_volatility"], 2),
         "market_exposure_pct": round(metrics["market_exposure_pct"], 2),
+        "assumed_risk_free_rate": metrics.get("assumed_risk_free_rate"),
+        "risk_free_rate_note": metrics.get("risk_free_rate_note"),
         "total_costs": round(metrics["total_transaction_costs"], 2),
         "total_slippage": round(metrics["total_slippage_paid"], 2),
+        "all_in_friction_total": round(metrics["all_in_friction_total"], 2),
         "cost_breakdown": strat_result["cost_breakdown"],
+        "strategy_params": strat_result.get("strategy_params"),
         "trades": formatted_trades,
         "chart_data": chart_data,
         "timestamp": datetime.datetime.now().isoformat()

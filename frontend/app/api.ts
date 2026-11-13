@@ -207,6 +207,13 @@ export interface TradeItem {
   value: string;
   pnl: string;
   positive: boolean;
+  brokerage?: number;
+  stt?: number;
+  exchange_charges?: number;
+  gst?: number;
+  stamp_duty?: number;
+  slippage_paid?: number;
+  all_in_friction?: number;
 }
 
 export interface ChartPoint {
@@ -225,6 +232,9 @@ export interface CostBreakdown {
   stamp_duty: number;
   slippage: number;
   total_costs: number;
+  statutory_charges_total?: number;
+  transaction_fees_total?: number;
+  all_in_friction_total?: number;
 }
 
 export interface BacktestResponse {
@@ -233,17 +243,22 @@ export interface BacktestResponse {
   cagr: number;
   sharpe_ratio: number;
   max_drawdown: number;
-  win_rate: number;
+  win_rate: number | null;
   final_value: number;
   total_return: number;
   num_trades: number;
   outperformance: number;
-  profit_factor?: number;
+  profit_factor: number | null;
+  profit_factor_status?: string;
   annualized_volatility?: number;
   market_exposure_pct?: number;
+  assumed_risk_free_rate?: number;
+  risk_free_rate_note?: string;
   total_costs?: number;
   total_slippage?: number;
+  all_in_friction_total?: number;
   cost_breakdown?: CostBreakdown;
+  strategy_params?: Record<string, unknown>;
   trades: TradeItem[];
   chart_data: ChartPoint[];
   timestamp: string;
@@ -287,7 +302,9 @@ export const api = {
     symbol: string,
     period: string = "5y",
     initialCapital: number = 100000.0,
-    slippagePct: number = 0.0005
+    slippagePct: number = 0.0005,
+    riskFreeRate: number = 0.065,
+    strategyParams?: Record<string, unknown>
   ): Promise<BacktestResponse> {
     return fetchWithRetry(`${API_BASE_URL}/backtest`, {
       method: "POST",
@@ -297,6 +314,8 @@ export const api = {
         period,
         initial_capital: initialCapital,
         slippage_pct: slippagePct,
+        risk_free_rate: riskFreeRate,
+        strategy_params: strategyParams,
       }),
     }) as Promise<BacktestResponse>;
   },

@@ -5,8 +5,9 @@ Provides realistic, deterministic, and lookahead-free quantitative backtesting:
 2. Whole integer shares only (no fractional equity).
 3. Realistic Indian trading cost model (Brokerage, STT, GST, Exchange charges, Stamp Duty).
 4. Full cash compounding across consecutive trades.
-5. Strict portfolio ledger invariant: Equity = Cash + Position Value at every bar.
+5. Strict portfolio ledger independent journal reconciliation at every bar.
 6. Automatic end-of-simulation position liquidation for unambiguous performance accounting.
+7. Strict, non-destructive historical data validation with explicit rejection of malformed candles.
 """
 
 from typing import Dict, Any, List, Optional, Union
@@ -29,7 +30,7 @@ class BacktestEngine:
         self,
         cost_model: Optional[IndianTradingCostModel] = None,
         slippage_pct: float = 0.0005,  # 5 bps default
-        risk_free_rate: float = 0.06   # 6% Indian benchmark
+        risk_free_rate: float = 0.065  # Assumed benchmark 6.50% (RBI Repo / 91-Day T-Bill)
     ):
         self.cost_model = cost_model or IndianTradingCostModel(slippage_pct=slippage_pct)
         self.slippage_pct = slippage_pct
@@ -37,14 +38,19 @@ class BacktestEngine:
 
     @staticmethod
     def validate_historical_data(df: pd.DataFrame, min_bars: int = 15) -> pd.DataFrame:
-        """Validates and cleans OHLC historical data.
+        """Strictly validates OHLC historical data without silent dropping or candle repairing.
 
-        Checks:
-        - Non-empty and meets minimum required bar count.
-        - Presence of 'Open', 'High', 'Low', 'Close' columns.
-        - Chronological order.
-        - No NaN or non-positive price values.
-        - High >= Low, High >= max(Open, Close), Low <= min(Open, Close).
+        Rejection rules:
+        - Must be non-empty and contain required columns ['Open', 'High', 'Low', 'Close'].
+        - Rejects duplicate timestamps.
+        - Rejects out-of-order timestamps (must be strictly monotonic increasing).
+        - Rejects non-finite values (NaN, +inf, -inf).
+        - Rejects non-positive prices (<= 0).
+        - Rejects insufficient sample size (< min_bars).
+        - Rejects malformed OHLC relationships:
+          * High < Low
+          * High < Open or High < Close
+          * Low > Open or Low > Close
         """
         if df is None or df.empty:
             raise ValueError("Historical price data is empty.")
@@ -54,29 +60,80 @@ class BacktestEngine:
         if missing:
             raise ValueError(f"Historical data missing required columns: {missing}")
 
-        cleaned = df.copy()
+        # Validate and parse DatetimeIndex
+        if not isinstance(df.index, pd.DatetimeIndex):
+            try:
+                parsed_index = pd.to_datetime(df.index)
+            except Exception as e:
+                raise ValueError(f"Historical data index could not be parsed to datetime: {e}")
+        else:
+            parsed_index = df.index
 
-        # Ensure index is datetime and sorted
-        if not isinstance(cleaned.index, pd.DatetimeIndex):
-            cleaned.index = pd.to_datetime(cleaned.index)
-        cleaned = cleaned.sort_index()
+        # 1. Reject duplicate timestamps
+        if parsed_index.has_duplicates:
+            dups = parsed_index[parsed_index.duplicated()].unique()
+            dup_strs = [d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d) for d in dups[:5]]
+            raise ValueError(f"Historical data contains duplicate timestamps: {dup_strs}")
 
-        # Drop duplicates and nulls in OHLC
-        cleaned = cleaned.dropna(subset=required_cols)
-
-        # Ensure positive prices
-        for col in required_cols:
-            cleaned = cleaned[cleaned[col] > 0]
-
-        if len(cleaned) < min_bars:
+        # 2. Reject non-chronological ordering
+        if not parsed_index.is_monotonic_increasing:
             raise ValueError(
-                f"Insufficient historical data: {len(cleaned)} bars provided, minimum required is {min_bars}."
+                "Historical data is not in chronological order. Source data must be sorted in strictly ascending chronological order."
             )
 
-        # Enforce OHLC consistency boundaries
-        cleaned["High"] = cleaned[["High", "Open", "Close"]].max(axis=1)
-        cleaned["Low"] = cleaned[["Low", "Open", "Close"]].min(axis=1)
+        # 3. Reject non-finite values (NaN, +inf, -inf)
+        non_finite_mask = ~np.isfinite(df[required_cols].to_numpy())
+        if non_finite_mask.any():
+            invalid_rows = df[df[required_cols].isna().any(axis=1) | ~np.isfinite(df[required_cols]).all(axis=1)]
+            invalid_indices = [idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx) for idx in invalid_rows.index[:5]]
+            raise ValueError(
+                f"Historical data contains non-finite or NaN values in OHLC columns at dates: {invalid_indices}"
+            )
 
+        # 4. Reject non-positive prices
+        non_positive_mask = (df[required_cols] <= 0).any(axis=1)
+        if non_positive_mask.any():
+            invalid_dates = [idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx) for idx in df[non_positive_mask].index[:5]]
+            raise ValueError(f"Historical data contains non-positive price values at dates: {invalid_dates}")
+
+        # 5. Check minimum bar requirements
+        if len(df) < min_bars:
+            raise ValueError(
+                f"Insufficient historical data: {len(df)} bars provided, minimum required is {min_bars}."
+            )
+
+        # 6. Reject impossible OHLC candle geometries (strictly fail, do not rewrite)
+        high_low_invalid = df["High"] < df["Low"]
+        if high_low_invalid.any():
+            bad_idx = df[high_low_invalid].index[0]
+            bad_date = bad_idx.strftime("%Y-%m-%d") if hasattr(bad_idx, "strftime") else str(bad_idx)
+            row = df.loc[bad_idx]
+            raise ValueError(
+                f"Malformed OHLC data: High ({row['High']}) is less than Low ({row['Low']}) on {bad_date}."
+            )
+
+        high_open_invalid = df["High"] < df["Open"]
+        high_close_invalid = df["High"] < df["Close"]
+        if (high_open_invalid | high_close_invalid).any():
+            bad_idx = df[high_open_invalid | high_close_invalid].index[0]
+            bad_date = bad_idx.strftime("%Y-%m-%d") if hasattr(bad_idx, "strftime") else str(bad_idx)
+            row = df.loc[bad_idx]
+            raise ValueError(
+                f"Malformed OHLC data: High ({row['High']}) is less than Open ({row['Open']}) or Close ({row['Close']}) on {bad_date}."
+            )
+
+        low_open_invalid = df["Low"] > df["Open"]
+        low_close_invalid = df["Low"] > df["Close"]
+        if (low_open_invalid | low_close_invalid).any():
+            bad_idx = df[low_open_invalid | low_close_invalid].index[0]
+            bad_date = bad_idx.strftime("%Y-%m-%d") if hasattr(bad_idx, "strftime") else str(bad_idx)
+            row = df.loc[bad_idx]
+            raise ValueError(
+                f"Malformed OHLC data: Low ({row['Low']}) is greater than Open ({row['Open']}) or Close ({row['Close']}) on {bad_date}."
+            )
+
+        cleaned = df.copy()
+        cleaned.index = parsed_index
         return cleaned
 
     def run(
@@ -142,7 +199,7 @@ class BacktestEngine:
                 # Refine qty if fees push outlay slightly over cash
                 while qty > 0:
                     tentative_costs = self.cost_model.calculate_buy_costs(fill_price, qty, raw_price)
-                    if (qty * fill_price) + tentative_costs.total_costs <= ledger.cash + 1e-4:
+                    if (qty * fill_price) + tentative_costs.transaction_fees_total <= ledger.cash + 1e-4:
                         break
                     qty -= 1
 
@@ -182,7 +239,7 @@ class BacktestEngine:
             if ledger.get_position(symbol) > 0:
                 bars_in_market += 1
 
-            # 3. MARK TO MARKET AT BAR t CLOSE (enforces invariant)
+            # 3. MARK TO MARKET AT BAR t CLOSE (enforces independent reconciliation)
             ledger.mark_to_market(date_str, {symbol: close_price})
 
             # 4. EVALUATE STRATEGY SIGNAL AT BAR t CLOSE FOR PENDING EXECUTION AT t+1 OPEN
@@ -239,6 +296,7 @@ class BacktestEngine:
 
         return {
             "strategy_name": strat.name,
+            "strategy_params": strategy_kwargs,
             "symbol": symbol,
             "metrics": metrics,
             "closed_trades": ledger.closed_trades,
