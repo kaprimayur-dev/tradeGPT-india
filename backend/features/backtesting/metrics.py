@@ -31,7 +31,7 @@ def calculate_performance_metrics(
         initial_capital: Initial cash capital at start of simulation.
         total_bars: Total number of trading bars in the backtest period.
         bars_in_market: Total number of trading bars where an active position was held.
-        risk_free_rate: Annualized risk-free rate assumption (default 6.50% based on RBI Repo / 91-day T-bill).
+        risk_free_rate: Annualized illustrative risk-free rate assumption (default 6.50% / 0.065 configurable hurdle rate).
 
     Returns:
         Dict[str, Any] containing computed performance and risk statistics.
@@ -138,8 +138,9 @@ def calculate_performance_metrics(
         "sharpe_ratio": round(sharpe_ratio, 2),
         "assumed_risk_free_rate": round(risk_free_rate * 100.0, 2),
         "risk_free_rate_note": (
-            f"Assumed benchmark of {risk_free_rate * 100.0:.2f}% based on prevailing RBI Repo / "
-            "91-Day Treasury Bill rate as of early 2026. Note: Not interchangeable with long-term 10-year G-Sec yields."
+            f"Assumed illustrative benchmark of {risk_free_rate * 100.0:.2f}% p.a. (configurable risk-free hurdle rate). "
+            "Historical strategy returns are evaluated against this hurdle rate for Sharpe ratio calculation; "
+            "it represents an illustrative user-configurable parameter, not a live, guaranteed, or official sovereign yield curve rate."
         ),
         "win_rate": win_rate,
         "profit_factor": profit_factor,

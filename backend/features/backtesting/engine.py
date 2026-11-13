@@ -30,9 +30,10 @@ class BacktestEngine:
         self,
         cost_model: Optional[IndianTradingCostModel] = None,
         slippage_pct: float = 0.0005,  # 5 bps default
-        risk_free_rate: float = 0.065  # Assumed benchmark 6.50% (RBI Repo / 91-Day T-Bill)
+        risk_free_rate: float = 0.065  # Illustrative configurable hurdle rate: 6.50% p.a.
     ):
-        self.cost_model = cost_model or IndianTradingCostModel(slippage_pct=slippage_pct)
+        # Simulator operates strictly in delivery mode on daily OHLC candles
+        self.cost_model = cost_model or IndianTradingCostModel(mode="delivery", slippage_pct=slippage_pct)
         self.slippage_pct = slippage_pct
         self.risk_free_rate = risk_free_rate
 

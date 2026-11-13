@@ -235,7 +235,7 @@ export default function QuantitativeStrategyPage() {
           </div>
           <div>
             <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">Exchange & IPFT</span>
-            <span className="font-mono font-bold text-[#191b23]">NSE: ₹307/cr (₹297 + ₹10 IPFT)</span>
+            <span className="font-mono font-bold text-[#191b23]">NSE: ₹307/cr (₹306.99 + ₹0.01 IPFT pass-through)</span>
           </div>
           <div>
             <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">STT & Stamp Duty</span>
@@ -243,7 +243,11 @@ export default function QuantitativeStrategyPage() {
           </div>
           <div>
             <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">Risk-Free Benchmark</span>
-            <span className="font-mono font-bold text-[#191b23]">6.50% (RBI Repo benchmark)</span>
+            <span className="font-mono font-bold text-[#191b23]">6.50% (Illustrative hurdle)</span>
+          </div>
+          <div>
+            <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">Execution Mode</span>
+            <span className="font-mono font-bold text-[#191b23]">Delivery-only (Daily OHLC)</span>
           </div>
           <div>
             <span className="text-[10px] text-[#737686] font-bold uppercase tracking-wider block">Slippage & Timing</span>

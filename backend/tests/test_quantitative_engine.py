@@ -58,6 +58,7 @@ from features.backtesting.strategies import (
 )
 from features.backtesting.metrics import calculate_performance_metrics
 from features.backtesting.engine import BacktestEngine
+from features.backtesting_engine import run_backtest_simulation
 
 
 # --- Deterministic Fixture Helpers ---
@@ -284,7 +285,7 @@ def test_indian_statutory_costs_exact_calculation():
     # 1. DELIVERY BUY SIDE:
     # Brokerage: min(20, 0.03% of 100,000) = min(20, 30) = ₹20.00 (Assumed commercial profile)
     # STT: 0.1% of 100,000 = ₹100.00
-    # Exchange charges (NSE Mar 1, 2026): 0.00307% of 100,000 = ₹3.07 (Turnover ₹2.97 + IPFT ₹0.10)
+    # Exchange charges (NSE Mar 1, 2026): 0.00307% of 100,000 = ₹3.07 (₹306.99/cr txn + ₹0.01/cr IPFT pass-through)
     # SEBI charges: 0.0001% of 100,000 = ₹0.10
     # GST: 18% of (20.00 + 3.07 + 0.10) = 18% of 23.17 = ₹4.1706 -> ₹4.17
     # Stamp duty: 0.015% of 100,000 = ₹15.00
@@ -632,7 +633,7 @@ def test_fastapi_backtest_endpoint_mocked(monkeypatch):
             "annualized_volatility": 18.5,
             "market_exposure_pct": 52.0,
             "assumed_risk_free_rate": 0.065,
-            "risk_free_rate_note": "Benchmark: 6.50% (RBI Repo Rate / 91-Day T-bill rate)",
+            "risk_free_rate_note": "Assumed illustrative benchmark of 6.50% p.a. (configurable risk-free hurdle rate).",
             "total_costs": 1240.50,
             "total_slippage": 450.00,
             "all_in_friction_total": 1690.50,
@@ -668,6 +669,23 @@ def test_fastapi_backtest_endpoint_mocked(monkeypatch):
                     "stamp_duty": 26.25,
                     "slippage_paid": 87.50,
                     "all_in_friction": 318.69
+                },
+                {
+                    "datetime": "2024-01-10",
+                    "side": "SELL",
+                    "asset": "TCS.NS",
+                    "qty": 50.0,
+                    "price": 3600.0,
+                    "value": "₹180,000.00",
+                    "pnl": "+2.86%",
+                    "positive": True,
+                    "brokerage": 20.0,
+                    "stt": 180.0,
+                    "exchange_charges": 5.53,
+                    "gst": 4.60,
+                    "stamp_duty": 0.0,
+                    "slippage_paid": 90.00,
+                    "all_in_friction": 300.13
                 }
             ],
             "chart_data": [
@@ -699,8 +717,16 @@ def test_fastapi_backtest_endpoint_mocked(monkeypatch):
     assert data["profit_factor"] == 2.15
     assert data["all_in_friction_total"] == 1690.50
     assert data["assumed_risk_free_rate"] == 0.065
-    assert len(data["trades"]) == 1
-    assert data["trades"][0]["brokerage"] == 20.0
+    assert "illustrative benchmark" in data["risk_free_rate_note"].lower()
+    assert len(data["trades"]) == 2
+    buy_t = data["trades"][0]
+    sell_t = data["trades"][1]
+    assert buy_t["side"] == "BUY"
+    assert buy_t["stamp_duty"] == 26.25
+    assert sell_t["side"] == "SELL"
+    assert sell_t["stamp_duty"] == 0.0
+    assert buy_t["brokerage"] == 20.0
+    assert sell_t["brokerage"] == 20.0
 
 
 # --- 23. Strict Historical Data: Duplicate Timestamps Rejected ---
@@ -914,24 +940,38 @@ def test_fastapi_backtest_e2e_local_fixture(monkeypatch):
 
     client = TestClient(app)
     response = client.post("/backtest", json={
-        "strategy": "SMA Crossover",
+        "strategy": "Buy & Hold",
         "symbol": "LOCAL_FIXTURE",
         "period": "1y",
         "initial_capital": 100000.0,
         "slippage_pct": 0.0005,
-        "risk_free_rate": 0.065,
-        "strategy_params": {"fast_period": 5, "slow_period": 15}
+        "risk_free_rate": 0.065
     })
 
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
     assert data["assumed_risk_free_rate"] == 6.5
-    assert "RBI Repo" in data["risk_free_rate_note"]
-    assert data["strategy_params"]["fast_period"] == 5
-    assert data["strategy_params"]["slow_period"] == 15
+    assert "illustrative benchmark" in data["risk_free_rate_note"].lower()
     assert "equity_curve" not in data  # Chart data is present, raw internal arrays are stripped
     assert len(data["chart_data"]) > 0
+
+    # Verify BUY / SELL fee separation in formatted simulation trade history
+    assert len(data["trades"]) == 2  # 1 roundtrip = 1 BUY entry + 1 SELL exit
+    buy_trade = data["trades"][0]
+    sell_trade = data["trades"][1]
+    assert buy_trade["side"] == "BUY"
+    assert sell_trade["side"] == "SELL"
+
+    # Entry-side BUY row has delivery stamp duty (>0)
+    assert buy_trade["stamp_duty"] > 0
+    # Exit-side SELL row has strictly zero stamp duty
+    assert sell_trade["stamp_duty"] == 0.0
+
+    # Individual row friction does not duplicate the total roundtrip friction
+    assert buy_trade["all_in_friction"] < data["all_in_friction_total"]
+    assert sell_trade["all_in_friction"] < data["all_in_friction_total"]
+    assert pytest.approx(buy_trade["all_in_friction"] + sell_trade["all_in_friction"], 0.02) == data["all_in_friction_total"]
 
 
 # --- 30. Strategy Parameter Validation (Rejection of Invalid Configs) ---

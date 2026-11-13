@@ -106,7 +106,7 @@ STRATEGY BACKTEST REPORT: {strategy_name} ON {ticker}
 [Explain the Maximum Drawdown ({max_drawdown:.2f}%) and Annualized Volatility ({annualized_volatility:.2f}%) observed during the simulation. Highlight the peak-to-trough drop and discuss capital preservation.]
 
 ## 6. Sharpe Ratio & Risk Adjustment
-[Discuss the Sharpe Ratio ({sharpe_ratio:.2f}). Explain what it indicates about the risk-adjusted returns of the strategy and whether the volatility was justified by the excess returns over the {rf_rate_pct}% risk-free rate.]
+[Discuss the Sharpe Ratio ({sharpe_ratio:.2f}). Explain what it indicates about the risk-adjusted returns of the strategy and whether the volatility was justified by the excess returns over the {rf_rate_pct}% illustrative risk-free hurdle rate.]
 
 ## 7. Trade Frequency & Market Exposure
 [Discuss the trade frequency ({num_trades} completed trades) and market exposure ({market_exposure_pct:.2f}% of trading days in active positions).]
@@ -646,6 +646,21 @@ def run_backtest_simulation(
         
     formatted_trades = []
     for t in trades:
+        entry_b = getattr(t, "entry_cost_breakdown", None) or {}
+        exit_b = getattr(t, "exit_cost_breakdown", None) or {}
+
+        # BUY row: displays entry-side charges only (avoids double-counting roundtrip fees)
+        buy_brokerage = entry_b.get("brokerage", getattr(t, "brokerage_paid", 0.0) / 2.0)
+        buy_stt = entry_b.get("stt", getattr(t, "stt_paid", 0.0) / 2.0)
+        buy_exchange = entry_b.get("exchange_charges", getattr(t, "exchange_charges_paid", 0.0) / 2.0)
+        buy_gst = entry_b.get("gst", getattr(t, "gst_paid", 0.0) / 2.0)
+        buy_stamp = entry_b.get("stamp_duty", getattr(t, "stamp_duty_paid", 0.0))
+        buy_slippage = entry_b.get("slippage", getattr(t, "slippage_paid", 0.0) / 2.0)
+        buy_all_in = entry_b.get(
+            "all_in_friction_total",
+            entry_b.get("total_costs", buy_brokerage + buy_stt + buy_exchange + buy_gst + buy_stamp) + buy_slippage
+        )
+
         formatted_trades.append({
             "datetime": t.entry_date,
             "side": "BUY",
@@ -655,16 +670,29 @@ def run_backtest_simulation(
             "value": f"₹{(t.qty * t.entry_fill_price):,.2f}",
             "pnl": "-",
             "positive": True,
-            "brokerage": round(getattr(t, "brokerage_paid", 0.0), 2),
-            "stt": round(getattr(t, "stt_paid", 0.0), 2),
-            "exchange_charges": round(getattr(t, "exchange_charges_paid", 0.0), 2),
-            "gst": round(getattr(t, "gst_paid", 0.0), 2),
-            "stamp_duty": round(getattr(t, "stamp_duty_paid", 0.0), 2),
-            "slippage_paid": round(t.slippage_paid, 2),
-            "all_in_friction": round(getattr(t, "all_in_friction", t.total_costs + t.slippage_paid), 2),
+            "brokerage": round(buy_brokerage, 2),
+            "stt": round(buy_stt, 2),
+            "exchange_charges": round(buy_exchange, 2),
+            "gst": round(buy_gst, 2),
+            "stamp_duty": round(buy_stamp, 2),
+            "slippage_paid": round(buy_slippage, 2),
+            "all_in_friction": round(buy_all_in, 2),
             "holding_days": t.holding_days,
             "exit_reason": t.exit_reason
         })
+
+        # SELL row: displays exit-side charges only (stamp duty strictly ₹0.00 on sell)
+        sell_brokerage = exit_b.get("brokerage", getattr(t, "brokerage_paid", 0.0) / 2.0)
+        sell_stt = exit_b.get("stt", getattr(t, "stt_paid", 0.0) / 2.0)
+        sell_exchange = exit_b.get("exchange_charges", getattr(t, "exchange_charges_paid", 0.0) / 2.0)
+        sell_gst = exit_b.get("gst", getattr(t, "gst_paid", 0.0) / 2.0)
+        sell_stamp = exit_b.get("stamp_duty", 0.0)  # Strictly ₹0.00 on sell side
+        sell_slippage = exit_b.get("slippage", getattr(t, "slippage_paid", 0.0) / 2.0)
+        sell_all_in = exit_b.get(
+            "all_in_friction_total",
+            exit_b.get("total_costs", sell_brokerage + sell_stt + sell_exchange + sell_gst + sell_stamp) + sell_slippage
+        )
+
         formatted_trades.append({
             "datetime": t.exit_date,
             "side": "SELL",
@@ -674,13 +702,13 @@ def run_backtest_simulation(
             "value": f"₹{(t.qty * t.exit_fill_price):,.2f}",
             "pnl": f"{t.net_return_pct:+.2f}%",
             "positive": t.net_return_pct > 0,
-            "brokerage": round(getattr(t, "brokerage_paid", 0.0), 2),
-            "stt": round(getattr(t, "stt_paid", 0.0), 2),
-            "exchange_charges": round(getattr(t, "exchange_charges_paid", 0.0), 2),
-            "gst": round(getattr(t, "gst_paid", 0.0), 2),
-            "stamp_duty": round(getattr(t, "stamp_duty_paid", 0.0), 2),
-            "slippage_paid": round(t.slippage_paid, 2),
-            "all_in_friction": round(getattr(t, "all_in_friction", t.total_costs + t.slippage_paid), 2),
+            "brokerage": round(sell_brokerage, 2),
+            "stt": round(sell_stt, 2),
+            "exchange_charges": round(sell_exchange, 2),
+            "gst": round(sell_gst, 2),
+            "stamp_duty": round(sell_stamp, 2),
+            "slippage_paid": round(sell_slippage, 2),
+            "all_in_friction": round(sell_all_in, 2),
             "holding_days": t.holding_days,
             "exit_reason": t.exit_reason
         })

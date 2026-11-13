@@ -1,6 +1,6 @@
 # TG-003 — Implementation Report: Quantitative Strategy Engine & Backtester Hardening
 
-**Milestone:** TG-003 — Quantitative Strategy Engine & Backtester Hardening (incorporating TG-003.7 Independent CTO Review Corrections)  
+**Milestone:** TG-003 — Quantitative Strategy Engine & Backtester Hardening (incorporating TG-003.8 Accuracy & Reporting Corrections)  
 **Project:** TradeGPT India 2.0  
 **Branch:** `restart/tradegpt-2.0`  
 **Date:** November 13, 2026  
@@ -12,7 +12,7 @@
 
 Milestone TG-003 targeted the core quantitative simulation engine of TradeGPT India 2.0. The audit conducted during TG-001 identified severe mathematical and economic flaws in the legacy backtester, including same-bar lookahead execution, zero transaction friction (0 brokerage, 0 taxes, 0 slippage), fractional share quantities, absence of portfolio equity invariants, and non-implemented strategy placeholders (MACD Breakout and Bollinger Bands).
 
-In TG-003 and TG-003.7, we completely re-architected the backtesting engine into a modular, deterministic, and verifiable subsystem located at `backend/features/backtesting/`. Every trade execution is now lookahead-free, enforces whole integer shares, models the complete statutory Indian tax and fee schedule (STT, GST, Stamp Duty, Exchange Charges, SEBI fees, and slippage), tracks full cash compounding across consecutive trades, and verifies the accounting invariant $\text{Equity} = \text{Cash} + \text{Position Value}$ at every bar with an independent double-entry audit journal.
+In TG-003, TG-003.7, and TG-003.8, we completely re-architected the backtesting engine into a modular, deterministic, and verifiable subsystem located at `backend/features/backtesting/`. Every trade execution is now lookahead-free, enforces whole integer shares, models the complete statutory Indian tax and fee schedule (STT, GST, Stamp Duty, Exchange Charges, SEBI fees, and slippage), tracks full cash compounding across consecutive trades, verifies the accounting invariant $\text{Equity} = \text{Cash} + \text{Position Value}$ at every bar with an independent double-entry audit journal, formats separate BUY and SELL transaction history charges, and clearly discloses the illustrative nature of the risk-free benchmark hurdle rate.
 
 ---
 
@@ -21,16 +21,16 @@ In TG-003 and TG-003.7, we completely re-architected the backtesting engine into
 ```
 backend/features/backtesting/
 ├── __init__.py           # Unified exports for BacktestEngine, CostModel, Ledger, Strategies, calculate_wilder_rsi
-├── costs.py              # IndianTradingCostModel & CostBreakdown (NSE cash Mar 1, 2026 fee schedule)
+├── costs.py              # IndianTradingCostModel & CostBreakdown (NSE cash Mar 1, 2026 circular breakdown)
 ├── ledger.py             # PortfolioLedger & TradeRecord (double-entry journal, integer sizing, compounding)
 ├── strategies.py         # Strategy base class & 5 concrete strategy implementations + exact 1978 Wilder RSI
-├── metrics.py            # Comprehensive performance and risk metrics calculator (configurable risk-free rate)
+├── metrics.py            # Comprehensive performance and risk metrics calculator (illustrative risk-free hurdle)
 └── engine.py             # BacktestEngine simulation loop with next-bar execution & strict OHLC validation
 ```
 
 Supporting and Consumer Files Updated:
-- `backend/features/backtesting_engine.py`: Refactored to delegate simulation to `BacktestEngine`, supports local DataFrame injection for zero-network testing, and formats reports cleanly.
-- `backend/app/schemas/backtest.py`: Extended `BacktestRequest` and `BacktestResponse` schemas with new metrics, `risk_free_rate`, `strategy_params` with per-strategy validation, and itemized cost breakdowns.
+- `backend/features/backtesting_engine.py`: Refactored to delegate simulation to `BacktestEngine`, formats entry charges on BUY and exit charges on SELL without roundtrip duplication, supports local DataFrame injection for zero-network testing.
+- `backend/app/schemas/backtest.py`: Extended `BacktestRequest` and `BacktestResponse` schemas with new metrics, illustrative `risk_free_rate`, `strategy_params` with per-strategy validation, and itemized cost breakdowns.
 - `backend/app/services/backtest_service.py` & `backend/app/routes/backtest.py`: Updated endpoints to accept `slippage_pct`, `risk_free_rate`, `strategy_params`, and pass all 5 strategies to the engine.
 - `frontend/app/api.ts`: Added types for `CostBreakdown`, `TradeItem` friction fields, and optional fields to `BacktestResponse`.
 - `frontend/app/quantitative-strategy/page.tsx`: Updated strategy selector with all 5 strategies, updated inputs configuration rail with realistic Indian charges, added Profit Factor and Volatility to Attribution, and rendered the itemized Statutory Cost & Friction Breakdown card.
@@ -46,42 +46,50 @@ Supporting and Consumer Files Updated:
 
 ### 3.2 Indian Trading Cost Model (`costs.py`)
 Modeled strictly against the NSE equity cash market schedule effective March 1, 2026:
-- **Brokerage:** Assumed commercial profile: Min(₹20, 0.03% of turnover) + ₹0 flat + 18% GST (clearly distinguished from statutory taxes).
-- **Securities Transaction Tax (STT):** Delivery: 0.1% on buy and 0.1% on sell turnover. Intraday: 0.025% on sell side only.
-- **Exchange Transaction Charges (NSE):** ₹307 per crore per side (0.00307%), representing ₹297/cr turnover fee + ₹10/cr Investor Protection Fund Trust (IPFT) levy. Explicitly labeled as NSE-only.
+- **Brokerage:** Assumed commercial discount-broker profile: Min(₹20, 0.03% of turnover) + ₹0 flat + 18% GST (clearly distinguished from statutory taxes).
+- **Securities Transaction Tax (STT):** Delivery: 0.1% on buy and 0.1% on sell turnover. Intraday (utility only): 0.025% on sell side only.
+- **Exchange Transaction Charges (NSE):** Total ₹307 per crore per side (0.00307%), representing ₹306.99/cr core transaction charges plus ₹0.01/cr Investor Protection Fund Trust (IPFT) contribution per the revised March 1, 2026 circular breakdown. In this simulator, this exchange-member regulatory outflow is assumed to be passed through 1:1 by brokers to users without markup. Labeled as NSE-only.
 - **SEBI Turnover Charges:** ₹10 per crore (0.0001% of turnover).
 - **Goods and Services Tax (GST):** 18% on (Brokerage + Exchange Charges + SEBI Charges).
-- **Stamp Duty:** Delivery: 0.015% on Buy turnover. Intraday: 0.003% on Buy turnover. Strictly ₹0.00 on Sell side per Indian Stamp Act.
+- **Stamp Duty:** Delivery: 0.015% on Buy turnover, strictly ₹0.00 on Sell side per Indian Stamp Act. Intraday (utility only): 0.003% on Buy turnover.
 - **Execution Slippage:** 5 basis points (0.05%) default directional execution slippage.
 - **Friction Separation:** Explicitly distinguishes `transaction_fees_total` (fees deducted from cash) from `all_in_friction_total` (fees + execution slippage).
 
-### 3.3 Independent Double-Entry Portfolio Ledger (`ledger.py`)
+### 3.3 Transaction History BUY/SELL Formatting (`backtesting_engine.py`)
+- **Separation:** BUY rows display entry-side charges only (`entry_cost_breakdown` including 0.015% stamp duty); SELL rows display exit-side charges only (`exit_cost_breakdown` with ₹0.00 stamp duty).
+- **No Duplication:** Round-trip aggregate fees are never duplicated across rows. The sum of BUY row `all_in_friction` and SELL row `all_in_friction` exactly matches the total trade friction.
+
+### 3.4 Simulator Scope vs Cost-Model Utilities
+- **Delivery-Only Engine:** The simulator operates strictly on daily OHLC candles holding positions overnight across sessions; all simulated trades are delivery trades.
+- **Cost-Model Utilities:** Intraday fee formulas exist solely as theoretical utility functions within `IndianTradingCostModel` and are not exposed as active simulator execution modes.
+
+### 3.5 Independent Double-Entry Portfolio Ledger (`ledger.py`)
 - **Double-Entry Audit Journal:** Maintains an append-only transaction journal of all cash movements (`INITIAL_CAPITAL`, `BUY_OUTLAY`, `BUY_FEES`, `SELL_PROCEEDS`, `SELL_FEES`) and position deltas (`BUY`, `SELL`).
 - **Independent Reconciliation Invariant:** At every bar, `reconcile_balances()` independently sums the journal deltas and verifies that active `cash == sum(cash_deltas)` and `positions == sum(qty_deltas)`. Tampering with cash or positions raises an immediate `AssertionError`.
 - **Integer Position Sizing:** Enforces whole number shares (`int(qty)`). Cash outlay includes purchase price plus calculated fees and taxes.
 - **Cash Compounding:** Proceeds from closed trades (net of statutory costs) are credited back to cash, compound naturally, and size subsequent trade entries.
 - **End of Simulation Liquidation:** If an open position exists on the final bar, it is liquidated at the final bar's Close price with full statutory exit costs and slippage deducted, marked with `exit_reason="END_OF_SIMULATION"`.
 
-### 3.4 Strict Historical Data Validation (`engine.py`)
-Rejects invalid or unwholesome data with clear diagnostic exceptions:
-- Duplicate timestamps strictly rejected (`ValueError: Historical data contains duplicate timestamps`).
-- Non-chronological timestamps strictly rejected (`ValueError: Historical data index must be in strictly ascending chronological order`).
-- Non-finite values (NaN, +Inf, -Inf) strictly rejected (`ValueError: Historical data contains non-finite values`).
-- Non-positive prices ($\le 0$) strictly rejected (`ValueError: Historical data contains non-positive prices`).
-- Malformed candle geometries (High < Low, High < max(Open, Close), Low > min(Open, Close)) strictly rejected without silent modification or clamping.
+### 3.6 Strict Historical Data Validation (`engine.py`)
+Strictly rejects invalid or unwholesome data with clear diagnostic `ValueError` exceptions (never silently drops, alters, or repairs data):
+- Duplicate timestamps strictly rejected.
+- Non-chronological timestamps strictly rejected.
+- Non-finite values (NaN, +Inf, -Inf) strictly rejected.
+- Non-positive prices ($\le 0$) strictly rejected.
+- Malformed candle geometries (High < Low, High < max(Open, Close), Low > min(Open, Close)) strictly rejected.
 
-### 3.5 Exact 1978 Wilder RSI Calculation (`strategies.py`)
+### 3.7 Exact 1978 Wilder RSI Calculation (`strategies.py`)
 - Implements J. Welles Wilder's exact algorithm from *New Concepts in Technical Trading Systems* (1978).
 - Initial seed over the first $N$ bars is the arithmetic average of gains and losses.
 - Subsequent bars use recursive smoothing: $\text{Avg} = (\text{Prev} \times (N-1) + \text{Curr}) / N$.
-- Numerically verified against hand-calculated reference series.
+- Numerically verified against textbook hand-calculated benchmark.
 
-### 3.6 Risk & Performance Metrics (`metrics.py`)
+### 3.8 Risk & Performance Metrics (`metrics.py`)
 Mathematically rigorous metrics calculated deterministically:
 - Total Return & CAGR (compounded annual growth rate over exact calendar days).
 - Maximum Drawdown (peak-to-trough from running cumulative maximum).
 - Annualized Volatility ($\text{std}(\text{daily\_returns}) \times \sqrt{252} \times 100$).
-- Annualized Sharpe Ratio over configurable risk-free rate (default 6.50% / 0.065 citing RBI Repo / 91-Day T-Bill benchmark).
+- Annualized Sharpe Ratio over configurable risk-free hurdle rate (default 6.50% / 0.065 illustrative benchmark).
 - Win Rate (`None` on zero trades) and Profit Factor (`None` with status `"infinite"` on all-winning series).
 - Market Exposure (% of trading days with an active long position).
 - Itemized friction breakdown: statutory charges, transaction fees, and all-in friction.

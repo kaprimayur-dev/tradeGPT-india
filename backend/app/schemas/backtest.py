@@ -32,7 +32,7 @@ class BacktestRequest(BaseModel):
         0.065,
         ge=0.0,
         le=0.25,
-        description="Annualized risk-free rate assumption (default 6.50% based on RBI Repo / 91-Day T-Bill benchmark)."
+        description="Annualized illustrative risk-free rate assumption (default 6.50% configurable hurdle rate)."
     )
     strategy_params: Optional[Dict[str, Any]] = Field(
         None,
@@ -121,7 +121,7 @@ class CostBreakdownSchema(BaseModel):
     turnover: float = Field(..., description="Total gross turnover in INR.")
     brokerage: float = Field(..., description="Total brokerage in INR.")
     stt: float = Field(..., description="Securities Transaction Tax in INR.")
-    exchange_charges: float = Field(..., description="NSE exchange transaction charges (₹307/cr) in INR.")
+    exchange_charges: float = Field(..., description="NSE exchange transaction charges pass-through (₹307/cr: ₹306.99 txn + ₹0.01 IPFT) in INR.")
     gst: float = Field(..., description="18% GST on brokerage + exchange charges + SEBI in INR.")
     sebi_charges: float = Field(..., description="SEBI turnover fees in INR.")
     stamp_duty: float = Field(..., description="Indian Stamp Act duty in INR.")

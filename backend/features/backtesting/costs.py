@@ -5,28 +5,40 @@ and execution slippage for the National Stock Exchange of India (NSE).
 
 Applicable Rate Sources & Effective Dates:
 1. Exchange Transaction Charges:
-   - Schedule effective March 1, 2026: Total ₹307 per crore per side (0.00307%),
-     which includes the NSE core turnover charge (₹297/crore / 0.00297%) plus the
-     NSE Investor Protection Fund Trust (IPFT) contribution (₹10/crore / 0.00010%).
+   - Revised March 1, 2026 circular breakdown: Total ₹307 per crore per side (0.00307% or rate 0.0000307),
+     comprising ₹306.99 per crore core transaction charges (0.0030699%) plus ₹0.01 per crore
+     NSE Investor Protection Fund Trust (IPFT) contribution (0.0000001%).
+   - Exchange-Member Outflow vs User Pass-Through: The ₹307/crore aggregate rate represents
+     the regulatory outflow payable by trading members to the exchange. In this simulator,
+     this charge is assumed to be passed through 1:1 by the executing broker to the
+     backtest user without additional retail exchange-turnover markup.
    - NOTE: This model is calibrated strictly for the NSE equity cash market.
      BSE transaction charge slabs and group-based tiered fees are distinct and
      are not implemented in this patch.
-2. Securities Transaction Tax (STT) [Finance Act Schedule]:
+2. Simulator Scope vs Cost-Model Utility Modes:
+   - Simulator Execution: The BacktestEngine operates strictly on daily OHLC bars where
+     positions are entered at bar t+1 Open and held across trading days; the actual simulation
+     engine is therefore strictly DELIVERY-ONLY.
+   - Cost-Model Utility: Intraday cost calculations (STT 0.025% sell-only, stamp duty 0.003%
+     buy-only) are implemented within this class strictly as theoretical cost-model utility
+     functions (e.g. for comparative cost estimation) and do not indicate intraday tick-level
+     or same-day square-off simulation capability in the engine.
+3. Securities Transaction Tax (STT) [Finance Act Schedule]:
    - Equity Delivery: 0.1% (0.001) on both BUY and SELL sides.
-   - Equity Intraday: 0.025% (0.00025) on SELL side only (strictly ₹0 on BUY side).
-3. Stamp Duty [Indian Stamp Act, Schedule I (effective July 1, 2020)]:
+   - Equity Intraday (Utility): 0.025% (0.00025) on SELL side only (strictly ₹0 on BUY side).
+4. Stamp Duty [Indian Stamp Act, Schedule I (effective July 1, 2020)]:
    - Equity Delivery: 0.015% (0.00015) on BUY side only (strictly ₹0 on SELL side).
-   - Equity Intraday / Non-Delivery: 0.003% (0.00003) on BUY side only (strictly ₹0 on SELL side).
-4. SEBI Turnover Charges [SEBI (Payment of Fees) Regulations]:
+   - Equity Intraday (Utility): 0.003% (0.00003) on BUY side only (strictly ₹0 on SELL side).
+5. SEBI Turnover Charges [SEBI (Payment of Fees) Regulations]:
    - ₹10 per crore (0.0001% / 0.000001) of turnover on both BUY and SELL.
-5. Goods and Services Tax (GST) [Central & State GST]:
+6. Goods and Services Tax (GST) [Central & State GST]:
    - 18% levied on: (Brokerage + Exchange Transaction Charges + SEBI Charges).
    - STT and Stamp Duty are statutory levies exempt from GST.
-6. Brokerage [Commercial Broker Assumption]:
+7. Brokerage [Commercial Broker Assumption]:
    - NOTE: Brokerage is NOT a statutory government tax. It is a commercial commission
      charged by stockbrokers. The model defaults to an assumed standard discount-broker
      schedule of ₹20 or 0.03% (whichever is lower) per executed order.
-7. Execution Slippage:
+8. Execution Slippage:
    - Tracked separately as an execution drag (adverse price fill at next candle Open).
    - Distinguished from statutory and broker cash deductions.
 """
@@ -107,12 +119,12 @@ class IndianTradingCostModel:
         brokerage_flat: float = 0.0,
         brokerage_max_per_order: float = 20.0,
         stt_delivery_rate: float = 0.001,             # 0.1% Buy & Sell
-        stt_intraday_rate: float = 0.00025,           # 0.025% Sell only
-        exchange_txn_rate: float = 0.0000307,         # NSE effective March 1, 2026: ₹307/cr (includes ₹10/cr IPFT)
+        stt_intraday_rate: float = 0.00025,           # 0.025% Sell only (utility function)
+        exchange_txn_rate: float = 0.0000307,         # NSE Mar 1, 2026: ₹307/cr pass-through (₹306.99 txn + ₹0.01 IPFT)
         gst_rate: float = 0.18,                       # 18% on fees
         sebi_rate: float = 0.000001,                  # ₹10 per crore (0.0001%)
         stamp_duty_delivery_rate: float = 0.00015,    # 0.015% on Buy only
-        stamp_duty_intraday_rate: float = 0.00003,    # 0.003% on Buy only
+        stamp_duty_intraday_rate: float = 0.00003,    # 0.003% on Buy only (utility function)
         slippage_pct: float = 0.0005                  # 5 bps (0.05%) default execution slippage
     ):
         if exchange != "NSE":
@@ -193,7 +205,7 @@ class IndianTradingCostModel:
             # Intraday STT is on SELL side only
             stt = (turnover * self.stt_intraday_rate) if side == "SELL" else 0.0
 
-        # 3. Exchange Transaction Charges (NSE total ₹307/cr including IPFT)
+        # 3. Exchange Transaction Charges (NSE total ₹307/cr pass-through: ₹306.99/cr txn + ₹0.01/cr IPFT)
         exchange_charges = turnover * self.exchange_txn_rate
 
         # 4. SEBI Turnover Charges (₹10/cr)
